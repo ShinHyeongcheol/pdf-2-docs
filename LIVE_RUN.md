@@ -80,5 +80,9 @@ SDK 직렬화가 바뀌면 묵인하지 않고 전송 전에 중단합니다. �
 기본 mock·승인 제안·승인 gate·실제 SDK 직렬화와 fake transport 실행·동시 예약·CLI 재시작·
 503/타임아웃/refusal/불완전 JSON/출처 오류·변조된 요청 차단을 오프라인으로 검증합니다.
 실제 키 조회·모델 가용성·실제 응답 품질·계정 요금·실제 청구·Notion 게시 통합은 검증하지 않았습니다.
-출력도 검토 후보이며 `human_review_required=true`, 의미 진위 검증=false입니다. 이 CLI는 결과를
-Notion에 쓰지 않고 기존 mock 전용 게시 경계는 live 결과를 계속 거절합니다.
+출력도 검토 후보이며 `human_review_required=true`, 의미 진위 검증=false입니다. 완료 결과의 digest와
+provider/실행 mode를 실행기가 소유한 완료 원장에 기록합니다. 주입된 client/key 의존성은 injected,
+주입 없는 실행도 network_unattested로 표시하며 실제 제공자 호출/청구를 인증하지 않습니다.
+이 CLI는 결과를 Notion에 쓰지 않습니다. [별도 검토 게시 계획](PROVIDER_PUBLICATION.md)은 완료
+원장·승인·현재 출처를 다시 검증해 mock 게시에 연결하고, 기존 raw-result MCP 경계는 provider 결과를
+계속 거절합니다. 실제 API 시험은 현재 보류 중이며 이 경로를 확인하기 위해 호출하지 마세요.
