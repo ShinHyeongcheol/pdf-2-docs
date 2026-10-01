@@ -142,3 +142,23 @@ def test_publisher_cannot_remove_ocr_human_review(tmp_path):
     result=store.run(job.job_id,Workflow(FixtureExtractor(),LocalKnowledgeAdapter(),BadPublisher(),asset_root=tmp_path))
     assert result.status==Status.FAILED and result.publish_plan is None
     assert result.input.document.extraction.human_review_required
+
+
+@pytest.mark.parametrize("change",["delete","bytes"])
+def test_assets_changed_during_planning_cannot_be_ready(tmp_path,change):
+    from pathlib import Path
+    from pdf_notion_mvp.adapters import FixtureExtractor,LocalKnowledgeAdapter,DryRunNotionPlanner
+    from pdf_notion_mvp.workflow import Workflow
+    source=candidate(tmp_path)
+    raster=Path(source.document.blocks[-1].asset_ref)
+    class ChangingPublisher(DryRunNotionPlanner):
+        def plan(self,restored,fingerprint):
+            plan=super().plan(restored,fingerprint)
+            if change=="delete": raster.unlink()
+            else: raster.write_bytes(b"changed during planner execution")
+            return plan
+    store=JobStore(tmp_path / "jobs.sqlite")
+    job=store.create(source,"a",PIPELINE_VERSION)
+    result=store.run(job.job_id,Workflow(FixtureExtractor(),LocalKnowledgeAdapter(),ChangingPublisher(),asset_root=tmp_path))
+    assert result.status==Status.REJECTED and result.publish_plan is None
+    assert not result.validation.passed

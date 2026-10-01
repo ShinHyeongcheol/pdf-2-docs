@@ -58,7 +58,9 @@ def create_app(db_path: Path | None = None, workflow: Workflow | None = None, *,
 
     @app.get("/jobs/{job_id}", response_model=Job)
     def get_job(job_id: str):
-        return store.get(job_id)
+        job = store.get(job_id)
+        require_allowed_mode(job.input)
+        return job
 
     @app.post("/jobs/{job_id}/advance", response_model=Job)
     def advance(job_id: str, request: Mutation):

@@ -9,7 +9,7 @@ from .contracts import DocumentIR, Event, Job, Outline, PublishPlan, RestoredDoc
 from .verification import verify
 from .identity import operation_key
 
-PIPELINE_VERSION = "ir-preservation-v5"
+PIPELINE_VERSION = "ir-preservation-v6"
 
 
 ALLOWED = {
@@ -117,20 +117,21 @@ class Workflow:
         if job.validation is None or not job.validation.passed or job.restored is None:
             raise ValueError("publication requires independent verification")
         assert job.outline is not None
-        # Files/root may have changed since the persisted validation checkpoint.
-        current_validation = verify(job.input.document, job.outline, job.restored, self.asset_root)
-        if not current_validation.passed:
-            job.validation = current_validation
-            return {"job": transition(job, Status.REJECTED)}
         plan = self.publisher.plan(job.restored.model_copy(deep=True), job.fingerprint)
-        job.publish_plan = PublishPlan.model_validate(plan.model_dump())
-        if not job.publish_plan.human_review_required:
+        candidate = PublishPlan.model_validate(plan.model_dump())
+        if not candidate.human_review_required:
             raise ValueError("publisher cannot remove the human review requirement")
         expected = [(s.section_id, s.title, b.model_dump()) for s in job.restored.sections for b in s.blocks]
-        actual = [(o.section_id, o.section_title, o.block.model_dump()) for o in job.publish_plan.operations]
-        if actual != expected or len({o.operation_key for o in job.publish_plan.operations}) != len(expected):
+        actual = [(o.section_id, o.section_title, o.block.model_dump()) for o in candidate.operations]
+        if actual != expected or len({o.operation_key for o in candidate.operations}) != len(expected):
             raise ValueError("publishing plan differs from verified reconstruction")
-        for operation in job.publish_plan.operations:
+        for operation in candidate.operations:
             if operation.operation_key != operation_key(job.fingerprint, operation.section_id, operation.block.block_id):
                 raise ValueError("publishing operation key is not deterministic")
+        # Recheck after the replaceable planner returns, immediately before READY.
+        current_validation = verify(job.input.document, job.outline, job.restored, self.asset_root)
+        job.validation = current_validation
+        if not current_validation.passed:
+            return {"job": transition(job, Status.REJECTED)}
+        job.publish_plan = candidate
         return {"job": transition(job, Status.READY)}

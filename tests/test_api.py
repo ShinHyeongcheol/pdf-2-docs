@@ -51,6 +51,7 @@ def test_default_api_cannot_advance_or_publish_existing_demo_job(tmp_path,source
     assert job["status"]=="ready"
     client=TestClient(create_app(path))
     base=f"/jobs/{job['job_id']}"
+    assert client.get(base).status_code==403
     assert client.post(base+"/advance",json={"expected_revision":job['revision']}).status_code==403
     assert client.post(base+"/resume",json={"expected_revision":job['revision']}).status_code==403
     assert client.get(base+"/publish-plan").status_code==403
