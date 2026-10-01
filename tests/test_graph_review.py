@@ -347,3 +347,22 @@ def test_cli_conflict_keeps_user_edited_graph_file(cli_root):
     assert run_cli(cli_root,["--mock-publish"]) == 1
     assert page.read_bytes() == original
     assert json.loads((cli_root/"output/mock-graph-plan.json").read_text())["status"] == "failed_human_review"
+
+
+@pytest.mark.parametrize('movement',['top_level_paragraph','extra_nested_toggle'])
+def test_moved_graph_marker_requires_review_before_duplicate_append(graph,movement):
+    f,_=graph
+    result=generate(graph)
+    note=paragraph('이동된 표식 검토 중 보존할 사용자 메모')
+    quiz=toggle('기존 문제',[toggle('출처',[paragraph('pdf-notion-quiz:v1:'+'a'*64)])])
+    gateway=MemoryPageGateway(f.binding,[note,quiz])
+    assert publish_graph_mock(*inputs(graph),result,f.binding,gateway).status=='mock_written'
+    identifier=gateway.children[2]['toggle']['children'][-1]
+    marker=identifier['toggle']['children'].pop()
+    if movement=='top_level_paragraph': gateway.children.append(marker)
+    else: identifier['toggle']['children'].append(toggle('사용자가 추가한 중첩',[marker]))
+    before=deepcopy(gateway.children)
+    receipt=publish_graph_mock(*inputs(graph),result,f.binding,gateway)
+    assert receipt.status=='failed_human_review'
+    assert not receipt.appended_keys and gateway.append_calls==1
+    assert gateway.children==before and gateway.children[:2]==[note,quiz]

@@ -252,9 +252,35 @@ def plan_graph_toggle(source, hierarchy, layer, evidence, image_bytes, result, b
         operations=[ToggleOperation(operation_key=key,block=payload)])
 
 
+def _graph_marker_texts(value) -> list[str]:
+    """Inspect every snapshot field; join rich text so split markers stay visible."""
+    if isinstance(value, str):
+        return [value] if GRAPH_MARKER in value else []
+    if isinstance(value, list):
+        return [text for item in value for text in _graph_marker_texts(item)]
+    if not isinstance(value, dict):
+        return []
+    found = []
+    for key, child in value.items():
+        if key == "rich_text" and isinstance(child, list):
+            text = "".join(item.get("text", {}).get("content", "") for item in child)
+            found.extend(_graph_marker_texts(text))
+            # Inspect remaining rich-text metadata without counting content twice.
+            remainder = deepcopy(child)
+            for item in remainder:
+                if isinstance(item.get("text"), dict): item["text"].pop("content", None)
+            found.extend(_graph_marker_texts(remainder))
+        else:
+            found.extend(_graph_marker_texts(child))
+    return found
+
+
 def graph_owned_key(block: dict) -> str | None:
-    if block.get("type") != "toggle":
+    all_markers = _graph_marker_texts(block)
+    if not all_markers:
         return None
+    if block.get("type") != "toggle":
+        raise ValueError("graph marker outside expected owner structure")
     markers = []
     for child in block.get("toggle", {}).get("children", []):
         if child.get("type") != "toggle":
@@ -266,9 +292,11 @@ def graph_owned_key(block: dict) -> str | None:
             if text.startswith(GRAPH_MARKER):
                 markers.append(text[len(GRAPH_MARKER):])
     if not markers:
-        return None
+        raise ValueError("graph marker moved or nested outside expected owner structure")
     if len(markers) != 1 or len(markers[0]) != 64 or any(c not in "0123456789abcdef" for c in markers[0]):
         raise ValueError("malformed graph-owned marker")
+    if all_markers != [GRAPH_MARKER+markers[0]]:
+        raise ValueError("extra or detached graph marker")
     return markers[0]
 
 
