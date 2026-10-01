@@ -1,12 +1,29 @@
 """Offline provider-result review plans and persistent mock Notion page rehearsal."""
 import argparse
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from .live_run import RunApproval, RunCompletion, artifact_path
 from .notion_quiz import MemoryPageGateway, PageSnapshot, SectionPage, paragraph
 from .provider_publication import plan_provider_toggles, publish_provider_mock
 from .quiz import GenerationBlocked
+
+
+def _save_mock_page(path: Path, snapshot: PageSnapshot) -> None:
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent,
+                prefix="."+path.name+"-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(snapshot.model_dump_json(indent=2)+"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def main(argv=None, *, project_root=None):
@@ -44,7 +61,7 @@ def main(argv=None, *, project_root=None):
             data.update(status=receipt.status, receipt=receipt.model_dump(mode="json"))
             if receipt.status != "failed_human_review":
                 page.parent.mkdir(parents=True, exist_ok=True)
-                page.write_text(gateway.snapshot(binding).model_dump_json(indent=2)+"\n")
+                _save_mock_page(page, gateway.snapshot(binding))
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(data, ensure_ascii=False, indent=2)+"\n")
         print(f"mode=provider_review_only status={data['status']} model_network=disabled notion_network=disabled")

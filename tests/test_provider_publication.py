@@ -295,3 +295,62 @@ def test_post_generation_receipt_failure_keeps_reservation_and_blocks_replay(com
     assert len(seen)==2
     reserved=json.loads((root/"output/live-runs"/(str(approval.spec.run_id)+".json")).read_text())
     assert reserved["state"]=="consumed_before_key_lookup"
+
+
+@pytest.mark.parametrize("failure",["partial_write","replace"])
+def test_mock_page_persistence_failure_keeps_notes_and_normal_restart(completed,monkeypatch,capsys,failure):
+    import tempfile
+    from pdf_notion_mvp.provider_publication_cli import main
+    from pdf_notion_mvp.notion_quiz import PageSnapshot
+    root,approval,completion,binding,_=completed
+    for name,value in [("approval.json",approval),("result.json",completion),("binding.json",binding)]:
+        (root/"output"/name).write_text(value.model_dump_json())
+    page=root/"output/atomic-page.json"
+    initial=MemoryPageGateway(binding,[paragraph("손상 없이 보존할 사용자 메모"),paragraph("기존 원문 출처")]).snapshot(binding)
+    page.write_text(initial.model_dump_json(indent=2))
+    original=page.read_bytes()
+    args=["--approval","output/approval.json","--result","output/result.json","--binding","output/binding.json",
+          "--mock-publish","--mock-page","output/atomic-page.json","--output","output/atomic-plan.json"]
+    original_write=Path.write_text
+    original_replace=Path.replace
+    original_temporary=tempfile.NamedTemporaryFile
+    class InterruptedWriter:
+        def __init__(self,stream): self.stream=stream
+        def __getattr__(self,name): return getattr(self.stream,name)
+        def __enter__(self): self.stream.__enter__();return self
+        def __exit__(self,*args): return self.stream.__exit__(*args)
+        def write(self,text):
+            self.stream.write(text.encode()[:80].decode(errors="ignore"))
+            self.stream.flush()
+            raise OSError("fabricated-secret-must-not-be-logged")
+    def partial_old_write(path,text,*args,**kwargs):
+        if path==page:
+            original_write(path,text.encode()[:80].decode(errors="ignore"),*args,**kwargs)
+            raise OSError("fabricated-secret-must-not-be-logged")
+        return original_write(path,text,*args,**kwargs)
+    def partial_new_write(*args,**kwargs):
+        stream=original_temporary(*args,**kwargs)
+        if Path(stream.name).parent==page.parent:
+            return InterruptedWriter(stream)
+        return stream
+    def fail_replace(path,target):
+        if Path(target)==page: raise OSError("fabricated-secret-must-not-be-logged")
+        return original_replace(path,target)
+    with monkeypatch.context() as scoped:
+        if failure=="partial_write":
+            scoped.setattr(Path,"write_text",partial_old_write)
+            scoped.setattr(tempfile,"NamedTemporaryFile",partial_new_write)
+        else: scoped.setattr(Path,"replace",fail_replace)
+        with pytest.raises(SystemExit) as exc: main(args,project_root=root)
+        assert exc.value.code==1
+    assert page.read_bytes()==original
+    assert PageSnapshot.model_validate_json(page.read_text())==initial
+    assert not list(page.parent.glob("."+page.name+"-*"))
+    with pytest.raises(SystemExit) as exc: main(args,project_root=root)
+    assert exc.value.code==0
+    saved=page.read_bytes()
+    assert PageSnapshot.model_validate_json(page.read_text()).children[:2]==initial.children
+    with pytest.raises(SystemExit) as exc: main(args,project_root=root)
+    assert exc.value.code==0 and page.read_bytes()==saved
+    assert json.loads((root/"output/atomic-plan.json").read_text())["status"]=="unchanged"
+    assert "fabricated-secret-must-not-be-logged" not in capsys.readouterr().out
