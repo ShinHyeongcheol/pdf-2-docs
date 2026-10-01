@@ -1,220 +1,140 @@
-제공자 기본 선택은 **Gemini**, OpenAI는 선택형입니다. 키 위치·설정·실제 실행 경계는 [PROVIDERS.md](PROVIDERS.md)를 참고하세요. 단일 실행 CLI는 mock 기본값, 비용 없는 승인 계획, 별도 승인 뒤 Gemini 합성 실행을 제공합니다.
-짧은 실행 안내와 조건부 비용 검사는 [LIVE_RUN.md](LIVE_RUN.md)를 참고하세요.
-
 # pdf-2-docs
 
-문서 구조와 출처를 유지하며 `목차 → 절별 복원 → 독립 검증 → 게시 계획`을 만드는 Python 프로젝트입니다.
-LangGraph가 실제 작업 노드를 실행하고, LangChain Core의 LCEL 체인이 목차 계획·복원을 실행합니다.
-기본 어댑터는 직접 작성한 합성 데이터에 대한 결정적 로컬 구현입니다. 모델 API 비용과 자격증명이 필요 없습니다.
+PDF의 원본과 출처를 보존하면서 `목차 → 절별 복원 → 독립 검증 → 게시 계획`을 만드는 Python 프로젝트입니다. Pydantic 계약, LangChain Core LCEL, LangGraph 작업 흐름과 SQLite 상태 저장을 사용합니다. 기본 합성 경로와 로컬 학습 경로는 키·모델 API·Notion 연결 없이 실행됩니다.
 
-**현재 가능한 것:** 합성 IR의 텍스트·이미지 참조·표·코드 보존, 출처/좌표 검증, SQLite 상태 저장,
-중간 실패 후 재개, 동일 입력 중복 방지, FastAPI 상태 조회, 실제 PDF의 텍스트 레이어/OCR 필요 여부 검사,
-Mac 내장 Apple Vision OCR의 텍스트·좌표·신뢰도와 원본 페이지 래스터 보존.
-**아직 없는 것:** OCR의 의미적 정확성 검증, PDF 표·코드·그림의 자동 의미적 복원, 실제 모델 응답 품질 검증,
-앱 내부 Notion API 쓰기, 실제 vision 해설, 임베딩/벡터 검색과 의미 정답 검증.
-별도 검토 기능은 합성 문제·그래프 토글 계획과 로컬 키워드 RAG를 제공합니다. RAG는 명시적 OCR IR·목차·확정 교정 파일의 선택 절에도 연결할 수 있으며 모델 호출이 없습니다.
-기본 게시 계획은 Notion HTTP payload가 아닌 중립적 검토 자료입니다. `ready`는 이 dry-run 자료가 준비되었다는 뜻입니다.
+현재는 **로컬 구현 체크포인트**입니다. 전체 PDF를 의미적으로 검수하여 Notion 학습 자료로 자동 완성하는 목표는 아직 완료하지 않았습니다. 전달물·검증·남은 작업은 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)에 정리했습니다. 실제 모델 API 시험과 Notion 표시 보정·최종 읽기 확인은 보류 중입니다.
 
-## 시작
+| 경로 | 지금 할 수 있는 일 | 검증의 범위 |
+| --- | --- | --- |
+| 구조·작업 상태 | 텍스트·이미지·표·코드 계약, 문서 버전·블록 ID·페이지·좌표, 재개·중복 방지·상태 API | 출처와 구조 검증; 의미 정확성은 별도 |
+| PDF·Mac OCR | 텍스트 레이어 검사, Apple Vision OCR, 페이지 PNG·좌표·신뢰도·SHA 보존 | 원본 페이지 보존; 자동 표·코드·그림 해석 없음 |
+| 목차·교정 | 제공한 전체 계층 목차와 별도 검토 레이어 검증, 확정 교정 적용 | 자동 전역 주제 목차 생성이나 새 의미 검수 없음 |
+| 규칙 문제·로컬 RAG | 선택 절의 확정 본문으로 빈칸 문제·키워드 검색·정확한 인용 검토 | 결정적 로컬 결과; 모델 설명·임베딩·벡터 검색 없음 |
+| 오프라인 학습 묶음 | 원본 이미지·전사/교정·후보·코드 검토·규칙 문제·인용을 정적 HTML로 표시 | 한 절의 읽기 자료; 전체 문서 학습 품질 완료 아님 |
+| Notion 연결 경계 | 새 절 페이지 생성 인수, pending 체크포인트, 읽기 확인·재실행 차단 | 호스트 MCP가 실행; 실제 표시 보정·최종 확인 보류 |
+| 그래프·provider | 합성 SVG 모의 해설, 선택형 SDK·승인 원장·모의 게시 계획 | 실제 PDF 그래프 해석·실제 모델 결과 게시 미검증 |
 
-Python 3.11 이상과 uv를 사용합니다. 설치 시 PyPI 접근이 필요하며, 이후 합성 경로는 네트워크 없이 실행됩니다.
+## 기존 환경에서 비용 없이 확인
 
-```bash
+사용자 Mac의 기본 체크아웃과 격리 환경에서 실행합니다. `PYTHONPATH=src`는 현재 체크아웃의 코드를 사용하게 합니다.
+
+```sh
 cd ~/Desktop/pdf-2-docs
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.cli fixtures/synthetic.json
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.review_cli fixtures/synthetic.json \
+  --outline fixtures/synthetic-outline.json --layer fixtures/synthetic-review.json \
+  --output output/synthetic-review.json
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.quiz_cli
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.notion_quiz_cli
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.graph_cli
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.rag_cli --eval
+```
+
+기본 흐름을 다시 실행하면 같은 job ID와 `revision=5`를 재사용합니다. `output/run.json`은 합성 2개 절·7개 중립적 게시 작업을 담습니다. `ready`는 이 검토 자료의 준비 상태이며 Notion 게시 성공을 뜻하지 않습니다. 문제는 `ready_for_review`, 근거 없는 RAG 답변은 `unknown`입니다. 위 Notion·그래프 명령도 모의 경로입니다.
+
+새 환경에서만 Python 3.11 이상과 uv로 설치합니다. 설치는 PyPI 접근이 필요합니다. 기본 로컬 경로에는 선택형 provider SDK가 필요 없습니다.
+
+```sh
 UV_CACHE_DIR=/tmp/pdf-notion-uv-cache uv sync --frozen --extra test --extra pdf
-.venv/bin/python -m pytest -q
-.venv/bin/python -m pdf_notion_mvp.cli fixtures/synthetic.json
+PYTHONPATH=src .venv/bin/python -m pytest -q
 ```
 
-같은 명령을 다시 실행하면 같은 job_id와 revision=5를 재사용합니다. `output/run.json`에서 2개 절,
-7개 게시 작업과 각 블록의 출처를 확인할 수 있습니다. 원본 PDF나 참조 자료는 저장소 밖에 보관합니다.
+## 기존 비공개 검토 입력으로 한 절 읽기
 
-```bash
-.venv/bin/python -m pdf_notion_mvp.pdf_inspect /absolute/private/input.pdf --output /absolute/private/inspection.json
-PDF_NOTION_TEST_PDF=/absolute/private/input.pdf .venv/bin/python -m pytest -q
-```
-
-검사 명령의 종료 코드 2는 OCR이 필요하거나 텍스트가 없다는 뜻입니다. 검사 파일은 생성됩니다.
-PDF 본문을 원격 서비스에 전송하지 않습니다. 전체 페이지의 텍스트 수와 이미지 수를 점검하되
-본문 추출 정확성이나 표·수식·코드 인식의 완전성을 보장하지 않습니다.
-
-## Mac의 무료 로컬 OCR
-
-Xcode Command Line Tools와 한국어/영어 Vision OCR 지원이 필요합니다. 외부 API 키가 필요 없습니다.
-다음은 **검토 후보**를 만들며 OCR confidence를 정확성 보증으로 쓰지 않습니다.
-
-```bash
-xcrun swiftc -module-cache-path /tmp/pdf-notion-swift-cache scripts/vision_ocr.swift -o /tmp/pdf-notion-vision-ocr
-.venv/bin/python -m pdf_notion_mvp.ocr_cli /absolute/private/input.pdf --work-dir /absolute/private/ocr --vision-binary /tmp/pdf-notion-vision-ocr --pages 1,6
-# 전체 문서: --pages all. 원문과 OCR 캐시는 저장소 밖 work-dir에 보존합니다.
-.venv/bin/python -m pdf_notion_mvp.cli /absolute/private/ocr/HASH/apple-vision-r3-150dpi/document-ir.json --output /absolute/private/run.json
-```
-
-OCR은 문서 SHA·엔진·DPI별 페이지 캐시에서 재개합니다. 첫 OCR 행을 슬라이드 제목 후보로 사용하며
-전역 의미적 목차 생성은 아직 제공하지 않습니다. 코드·표·그림은 페이지 이미지와 OCR 텍스트로 남습니다.
-부분 페이지 OCR은 `rejected`로 게시 계획을 차단합니다. 전체 페이지 보존 검증을 통과해도
-`human_review_required=true`이며 OCR 오탈자·인덴트·수식·다단 읽기 순서는 사람이 확인해야 합니다.
-자동 Notion 게시자는 없으며 MCP를 통한 검토 샘플 게시는 이 로컬 앱의 통합 테스트와 별개입니다.
-OCR 검증은 실제 페이지별 전체 래스터, 파일 존재와 SHA-256, 좌표 범위를 확인합니다.
-CLI는 IR 파일의 부모 폴더를 신뢰할 에셋 범위로 사용합니다. API에서 OCR IR을 검증하려면
-서버의 `PDF_NOTION_ASSET_ROOT`에 해당 비공개 OCR 폴더를 지정해야 합니다. 설정하지 않거나
-그 범위 밖 파일을 참조하면 `rejected`이며, API가 임의 로컬 파일을 읽지 않습니다.
-
-## 상태 API 확인
-
-```bash
-.venv/bin/python -m uvicorn pdf_notion_mvp.api:create_demo_app --factory --host 127.0.0.1 --port 8000
-```
-
-`http://127.0.0.1:8000/docs`에서 아래 순서로 확인할 수 있습니다.
-
-위 명령은 서버가 명시적으로 켜는 **합성 데모**입니다. 일반 `create_app`은 합성 입력의 생성·
-실행·재개·게시 계획 조회를 거절하며, 요청 본문으로 데모 모드를 활성화할 수 없습니다.
-일반 앱의 OCR 검증은 서버에서 지정한 신뢰 에셋 폴더를 사용합니다. 합성 모드는 합성 출처와
-`synthetic://` 이미지 참조만 허용하며 OCR/래스터 출처와 혼합할 수 없습니다.
-
-1. `POST /jobs`: `{"request_key":"local-demo","input": <fixtures/synthetic.json의 전체 객체>}`.
-2. `GET /jobs/{job_id}`: 현재 상태·revision·artifact·history 확인.
-3. `POST /jobs/{job_id}/advance`: 현재 `{"expected_revision":0}`부터 revision을 갱신하며 5회 실행.
-4. `GET /jobs/{job_id}/publish-plan`: 검증 통과 후만 확인 가능.
-
-`failed`는 `POST /jobs/{job_id}/resume`에 현재 revision을 보내 마지막 성공 상태로 복귀할 수 있습니다.
-`rejected`는 수정된 입력이나 새 pipeline version으로 다시 만들어야 합니다. 같은 request key에 다른
-입력은 409, 이전 revision의 mutation도 409입니다. 상태가 READY인 작업 재실행은 변경을 만들지 않습니다.
-
-기본 DB는 `output/jobs.sqlite`이며 `PDF_NOTION_DB`로 바꿀 수 있습니다. 서버는 로컬 확인용이며 인증을
-제공하지 않습니다. 기본 경로는 tracing 업로드를 비활성화하고 모델/Notion 클라이언트를 생성하지 않습니다.
-
-기능별 계약과 한계는 [DESIGN.md](DESIGN.md)에 있습니다. `tests/`는 상태 전이·재시작·예외 복구·동시성·
-중복 방지·검증 차단·API 동작을 검증합니다. 실제 원문 통합 테스트는 로컬 환경변수로 선택하며
-원문과 추출 결과를 fixture 또는 Git에 포함하지 않습니다.
-
-## 계층 목차와 별도 교정 레이어
-
-```bash
-.venv/bin/python -m pdf_notion_mvp.review_cli fixtures/synthetic.json --outline fixtures/synthetic-outline.json --layer fixtures/synthetic-review.json --output output/synthetic-review.json
-```
-
-`HierarchicalOutline`은 부모 노드와 블록을 소유하는 잎을 구분합니다. 트리의 잎을 펼쳤을 때
-원본 IR 전체 블록이 정확히 한 번, 입력 순서대로 나타나야 합니다. 선언 페이지는 실제 블록의 페이지와
-일치해야 하며 문서 전체를 포함해야 합니다. 페이지가 여러 개인 절도 허용합니다. `ProvidedHierarchyAdapter`로
-명시적 목차를 기존 복원·검증 경계에 적용할 수 있습니다. 목차 스냅샷의 SHA를 workflow version에
-포함하므로 같은 원본에 다른 목차를 사용한 작업은 구분하고, 동일 목차의 재시작은 재사용합니다. 기본 자동 계획을 대체하거나 전역 설정을 바꾸지 않습니다.
-
-`apply_review` 공개 함수는 명시적 `FixtureInput`을 받아 입력 모드·OCR/합성 출처 계약을
-함수 진입에서 다시 검증합니다. `DocumentIR` 단독 입력은 허용하지 않습니다.
-
-`ReviewLayer`는 문서 버전·전체 IR digest에 결합된 별도 데이터입니다. 교정은 block ID, 원본 OCR,
-출처 page/bbox, 제안 텍스트, 근거 이미지 ID/영역, 확인 상태를 저장합니다. 확인된 교정만 `effective_text`에
-적용하고 후보는 `pending_corrections`로 분리합니다. 원본 블록과 출처는 수정하지 않습니다.
-표·코드를 표시용으로 조립한 파생 fragment는 원본 block ID와 교정 ID의 계보를 유지합니다.
-원문 전사 확인과 기술적 주장의 정확성 검증은 다릅니다. 확인 상태는 검토자의 명시적 판단이며
-코드/API 실행이나 진위 판정 기능이 아닙니다. 공백 정규화·애매한 글자·잘린 출력은 근거와 후보에 기록합니다.
-
-OCR 입력은 기존 페이지 래스터/파일 SHA/신뢰 폴더 검증도 통과해야 합니다. CLI 출력이 원본·목차·교정
-입력 파일과 같은 경로면 실행을 거절합니다. `review_cli`는 모델 호출이나 Notion 쓰기를 하지 않습니다.
-실제 자료의 목차·교정 파일·결과는 저장소 밖에 보관하고 공개 fixture는 직접 작성한 합성 자료만 사용합니다.
-
-
-## OpenAI 선택 어댑터와 모의 문제 생성
-
-```bash
-UV_CACHE_DIR=/tmp/pdf-notion-uv-cache uv sync --frozen --extra test --extra pdf --extra openai
-.venv/bin/python -m pdf_notion_mvp.quiz_cli
-.venv/bin/python -m pytest -q
-```
-
-기본 CLI는 직접 작성한 합성 응답을 LangChain runnable로 생성하고 LangGraph의 생성 → 독립 검증 →
-제한 재시도 분기로 처리합니다. 실제 OpenAI 요청을 켜는 CLI 옵션은 없습니다. 결과는
-`output/mock-quiz.json`에 남고 검증 성공도 `ready_for_review`, 반복 실패는 `failed_human_review`입니다.
-
-첫 문제 유형은 근거 인용에 따른 빈칸 문제입니다. 답은 정확한 인용문 일부, 해설은 원문 인용으로
-제한합니다. 출처 없는 참조·인용·정답·질문/해설의 추가 주장·빈 답·문제 중복을 독립적으로 차단합니다.
-자유로운 해설이나 원문의 사실성 판정은 제공하지 않습니다. 성공해도 사람이 검토해야 합니다.
-OCR 근거는 확인된 교정 기록의 body text만 사용하고 미확인/교정 후보는 제외합니다. raw IR은 보존하며
-LLM context에는 확인된 파생 텍스트와 출처만 담습니다. 그림·표·코드의 의미 생성은 추후 별도 근거 어댑터로
-확장할 범위이고 이번 어댑터는 텍스트만 사용합니다. PDF의 지시문은 신뢰 명령이 아닌 인용 자료입니다.
-
-`OpenAIQuizAdapter`는 LangChain `ChatOpenAI.with_structured_output`을 사용합니다. 생성자에서 SDK/키를
-초기화하지 않습니다. 기본 `QuizPolicy`는 네트워크를 차단합니다. 실제 요청은 사용자가 키·모델·기능 지원·
-전송 자료·예산을 확인하고 `allow_network`, `budget_confirmed`, `capabilities_confirmed`를 명시적으로
-설정해야 가능하며, 이번 개발에서 실제 요청은 실행하지 않았습니다.
-
-직접 `OpenAIQuizAdapter`를 사용하는 기존 경로는 승인된 호출 안에서 `OPENAI_API_KEY` 환경변수를
-받습니다. 공통 `build_provider` 경로는 프로젝트 루트를 명시하면 승인 후 선택된 키만 `.env`에서
-읽을 수 있습니다. 실제 `.env`는 Git에서 제외하고 값 없는 `.env.example`만 포함합니다. 전체 파일을
-환경에 자동 로드하거나 키체인을 검색하지 않습니다. 자세한 설정은 [PROVIDERS.md](PROVIDERS.md)를 참고하세요.
-모델은 `QuizPolicy.model` 또는 승인된 live 경로의 `PDF_NOTION_OPENAI_MODEL`로 지정하고 기본 모델은 없습니다.
-설정과 key를 결과·로그에 저장하지 않습니다. 문서상의 기능 지원이 해당 계정의 모델 접근을 보장하지는 않습니다.
-
-호출 수·최종 요청 바이트·출력 토큰·timeout 한도를 명시해야 하며, SDK 자동 재시도는 0입니다.
-Graph 시도는 최대 3회이고 실패도 호출 예산을 소비합니다. 예산은 adapter 인스턴스 수명 내 요청 수 한도이며
-분산/영속 비용 원장이나 달러 단위 요금 상한은 아닙니다. 실제 시작 전 선택 모델의 현재 가격과 예산 승인을
-따로 확인해야 합니다. 공식 OpenAI endpoint를 명시하고 실제 SDK 요청 크기를 전송 전에 검사합니다.
-
-가짜 HTTP transport 테스트는 실제 SDK 직렬화와 모의 응답 해석만 검증합니다. API 키 유효성, 계정 권한,
-모델 가용성, 실제 응답 품질·요금·latency·vision 통합은 아직 검증하지 않았습니다.
-
-## 모의 문제의 절별 Notion 토글 계획
+먼저 아래 **예시 경로와 leaf ID·질문을 기존 파일의 값으로 바꾸세요.** `document-ir.json`은 전체 문서 IR이고 부모 폴더에 검증 가능한 페이지 PNG가 있어야 합니다. 목차와 교정 레이어는 이미 검토한 별도 입력입니다. 이 명령이 생성하거나 확정하지 않습니다.
 
 ```sh
-.venv/bin/python -m pdf_notion_mvp.notion_quiz_cli
+export PDF_STUDY_SOURCE=/absolute/private/ocr/document-ir.json
+export PDF_STUDY_OUTLINE=/absolute/private/planning/hierarchical-outline.json
+export PDF_STUDY_REVIEW=/absolute/private/planning/review-layer.json
+export PDF_STUDY_SECTION='YOUR_LEAF_ID'
+export PDF_STUDY_QUESTION='확정 본문에서 찾을 키워드'
+export PDF_STUDY_OUTPUT=/absolute/private/study-output
+
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.study_bundle \
+  --source "$PDF_STUDY_SOURCE" --outline "$PDF_STUDY_OUTLINE" \
+  --review "$PDF_STUDY_REVIEW" --section "$PDF_STUDY_SECTION" \
+  --question "$PDF_STUDY_QUESTION" --output-dir "$PDF_STUDY_OUTPUT"
 ```
 
-`output/mock-notion-quiz.json`에서 네이티브 문제 토글 → 정답/해설 토글과 원문 출처를 확인합니다.
-출력은 직접 작성한 **모의 문제**이고 실제 모델 생성 결과가 아닙니다. 저장된 QuizResult의 ready
-표시를 신뢰하지 않고 원문·교정·절 입력에서 근거 digest와 질문을 다시 검증합니다. 원본 전사와
-학습 근거를 따로 표시하고 문서 버전·블록 ID·페이지·좌표를 보존합니다.
+출력 경로는 절대 경로이고 Git과 모든 입력 폴더 밖이어야 합니다. symlink를 허용하지 않으므로 Mac 임시 폴더를 쓸 때도 정규 절대 경로를 지정하세요. 출력의 `index_html`을 브라우저에서 여세요. 같은 입력·절·질문으로 재실행하면 `unchanged`이며 파일 바이트·수정 시간을 보존합니다. 기존 출력이 수정·누락되면 보존하고 중단합니다. 원본 PNG·HTML·JSON·manifest가 하나의 내용 SHA 디렉터리에 생성됩니다. [STUDY_BUNDLE.md](STUDY_BUNDLE.md)에 상세 계약이 있습니다.
 
-`notion_quiz_cli`의 실행 대상은 가짜 페이지입니다. 호스트의 승인된 Notion 연결에 액션을 전달하는
-준비·재읽기 경계는 [NOTION_MCP.md](NOTION_MCP.md)를 참고하세요. 작은 합성 절의 실제 토글 추가·재읽기·중복 없는 재실행을 확인했으며, 전체 원문 게시 검증은 별도입니다.
-`SectionPage`는 지정 허브와 절 페이지의 연결 계약이며 향후 gateway가 실제 계층을 검증해야 합니다.
-완전한 페이지 snapshot에서 앱 토글의 표식을 먼저 읽고 누락된 문제만 추가합니다. 사용자 메모와
-원문 블록은 수정하지 않습니다. 앱 토글이 편집되거나 표식이 중복되면 사람 검토로 중단합니다.
-원격 성공 후 응답 유실은 다음 실행에서 표식을 읽어 복구하며 자동 재시도하지 않습니다.
-
-검증 범위는 순차 재실행입니다. 다중 작성자의 동시 게시, 표식 삭제, 실제 API의 부분 쓰기·페이지
-권한·계층·pagination은 미검증이며 실제 통합 전에 단일 작성자와 완전한 원격 읽기가 필요합니다.
-
-## Provider 결과의 검토 게시 계획
-
-완료 원장·승인·현재 출처를 재검증한 provider 결과를 절별 문제·정답·해설 토글 계획과 영속 mock
-페이지로 연결합니다. fake SDK 실행은 주입 실행으로 표시하고 검토 필요·의미 진위 미검증을 유지합니다.
-실제 API 시험은 보류 중이며 이 경로도 모델/Notion 네트워크를 사용하지 않습니다.
-[사용 안내와 신뢰 경계](PROVIDER_PUBLICATION.md)를 참고하세요.
-
-
-## 실제 검토 파일의 로컬 RAG
-
-[LOCAL_RAG.md](LOCAL_RAG.md)에 합성 데모와 실제 검토 파일 입력을 구분한 실행법이 있습니다.
-전체 IR·목차·교정 lineage와 페이지 래스터를 검증한 뒤 `--section`으로 선택한 leaf의 확정 텍스트만
-색인합니다. 원본 파일은 수정하지 않으며 200항목을 초과하면 더 작은 범위를 선택하도록 중단합니다.
-미확정/파생 후보는 답변 근거로 사용하지 않고 근거가 없으면 모름을 반환합니다.
-검색은 무료 로컬 단어 교집합이며 임베딩·외부 모델·Notion 요청은 없습니다.
+문제와 RAG JSON만 따로 확인하려면 같은 변수로 아래 함수를 정의합니다. 각 CLI의 `project_root`를 비공개 출력 루트로 명시하여 결과를 공개 체크아웃 밖의 `output/`에 저장합니다.
 
 ```sh
-.venv/bin/python -m pdf_notion_mvp.rag_cli \
-  --source /absolute/private/ocr/document-ir.json \
-  --outline /absolute/private/hierarchical-outline.json \
-  --review /absolute/private/confirmed-review.json \
-  --section '<목차 leaf ID>' --question '<질문>' \
-  --output output/private-rag-review.json
+run_local_review() {
+  PYTHONPATH=src .venv/bin/python - "$1" <<'PY'
+import os
+import sys
+from pathlib import Path
+from pdf_notion_mvp import quiz_files_cli, rag_cli
+
+args = ["--source", os.environ["PDF_STUDY_SOURCE"],
+        "--outline", os.environ["PDF_STUDY_OUTLINE"],
+        "--review", os.environ["PDF_STUDY_REVIEW"],
+        "--section", os.environ["PDF_STUDY_SECTION"]]
+root = Path(os.environ["PDF_STUDY_OUTPUT"])
+if sys.argv[1] == "quiz":
+    quiz_files_cli.main(args + ["--output", "output/local-rule-quiz.json"], project_root=root)
+elif sys.argv[1] == "rag":
+    rag_cli.main(args + ["--question", os.environ["PDF_STUDY_QUESTION"],
+                         "--output", "output/local-rag.json"], project_root=root)
+else:
+    raise SystemExit("choose quiz or rag")
+PY
+}
+run_local_review quiz
+run_local_review rag
 ```
 
-원문·교정·페이지 연결·결과는 공개 Git에 포함하지 마세요. OCR IR의 부모 폴더를 신뢰 에셋 범위로
-사용합니다. 실제 목차와 교정은 별도 검토 입력이며 이 명령이 자동 생성하거나 확정하지 않습니다.
-그래프는 [GRAPH_REVIEW.md](GRAPH_REVIEW.md)의 합성 SVG 모의 기능이며 실제 OCR 그래프 입력은
-아직 연결하지 않았습니다. 단일 모델 실행 CLI는 합성 승인 경로만 지원하고 실제 API 시험은 보류입니다.
+규칙 문제는 기본 1개·최대 3개입니다. RAG는 선택한 leaf의 확정 본문만 색인하며 200항목을 초과하면 범위를 줄여야 합니다. 후보·파생 코드·표는 정답 근거로 승격하지 않습니다. 출처·인용 검증은 기술적 주장이나 코드 실행의 정확성을 판정하지 않습니다. [LOCAL_QUIZ.md](LOCAL_QUIZ.md), [LOCAL_RAG.md](LOCAL_RAG.md)를 참고하세요.
 
+원본 PDF·OCR·교정·개인 매핑·질문·결과는 Git 밖에 보관하세요. 공개 fixture는 직접 작성한 합성 자료만 포함합니다. `.gitignore`만으로 비공개 자료의 공개 방지가 보장되지는 않습니다.
 
-## 실제 검토 파일의 로컬 규칙 문제
+## PDF 검사와 Mac 무료 OCR
 
-[LOCAL_QUIZ.md](LOCAL_QUIZ.md)의 `quiz_files_cli`는 지정한 한 leaf의 확인된 텍스트로 결정적
-빈칸 문제를 만들고 기존 인용/정답/해설 검증을 통과한 **중립적 검토 계획**을 저장합니다.
-실제 모델 생성으로 표시하지 않으며 provider/게시 대상은 비어 있습니다. 원문과 확정 교정 전사는
-따로 보존하고 후보/다른 절의 근거는 제외합니다. 기본 1개·최대 3개, 자동 Notion 게시는 없습니다.
-기존 합성 `quiz_cli`와 단일 승인 모델 경로를 변경하지 않습니다. 모델 API 시험은 계속 보류입니다.
+PDF 검사에는 `pdf` extra, OCR에는 Xcode Command Line Tools와 한국어/영어 Apple Vision 지원이 필요합니다. 이미 준비된 검토 입력을 읽는 위 명령에서는 OCR을 다시 실행하지 않습니다.
 
-한 절을 실제로 읽는 로컬 연결 경로는 [비공개 오프라인 절 학습 묶음](STUDY_BUNDLE.md)을 참고하세요. 기존 검토 JSON에서 원본 페이지·전사/교정·코드 검토·규칙 문제·로컬 인용답변을 하나의 정적 HTML로 묶습니다. 출력은 원문과 Git 밖에 저장하며 모델·키·Notion 요청을 수행하지 않습니다.
+```sh
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.pdf_inspect \
+  /absolute/private/input.pdf --output /absolute/private/inspection.json
+xcrun swiftc -module-cache-path /tmp/pdf-notion-swift-cache \
+  scripts/vision_ocr.swift -o /tmp/pdf-notion-vision-ocr
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.ocr_cli \
+  /absolute/private/input.pdf --work-dir /absolute/private/ocr \
+  --vision-binary /tmp/pdf-notion-vision-ocr --pages all
+PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.cli \
+  /absolute/private/ocr/HASH/apple-vision-r3-150dpi/document-ir.json \
+  --db /absolute/private/ocr-jobs.sqlite --output /absolute/private/run.json
+```
 
-[지정 Notion 허브 연결](STUDY_NOTION.md)은 같은 절 자료의 새 하위 페이지 생성 인수와 비공개 체크포인트를 준비합니다. 실제 MCP dispatch는 호스트가 수행하고, 읽기 확인 전에는 중복 생성하지 않습니다.
+검사 종료 코드 2는 OCR이 필요하거나 텍스트가 없음을 뜻하며 검사 파일은 생성됩니다. OCR은 문서 SHA·엔진·DPI별 캐시에서 재개합니다. 첫 행은 제목 후보로만 사용하고 전역 의미적 목차를 자동 생성하지 않습니다. 부분 페이지 OCR은 게시 계획을 `rejected`로 차단합니다. 전체 페이지 보존 검증을 통과해도 `human_review_required=true`입니다. OCR 오탈자·인덴트·수식·다단 읽기 순서, 표·코드·그림의 의미 복원은 별도 검토가 필요합니다.
+
+CLI는 IR 부모 폴더를 신뢰 에셋 범위로 사용합니다. API는 서버에서 지정한 `PDF_NOTION_ASSET_ROOT` 밖 파일을 읽지 않고 해당 설정이 없으면 OCR 입력을 거절합니다. 원문 통합 테스트는 명시적으로 `PDF_NOTION_TEST_PDF`를 지정해야 실행되며 기본 테스트에서는 건너뜁니다.
+
+## 로컬 작업 상태 API
+
+```sh
+PYTHONPATH=src .venv/bin/python -m uvicorn pdf_notion_mvp.api:create_demo_app \
+  --factory --host 127.0.0.1 --port 8000
+```
+
+`http://127.0.0.1:8000/docs`에서 합성 작업의 상태를 확인합니다. 일반 `create_app`은 합성 입력을 거절하며 요청 본문으로 데모 모드를 켤 수 없습니다. 이 API는 구조 검증 작업용입니다. HTML·규칙 문제·RAG·Notion까지 연결하는 전체 자동 실행기는 아닙니다.
+
+1. `POST /jobs`: `{"request_key":"local-demo","input": <fixtures/synthetic.json 전체 객체>}`.
+2. `GET /jobs/{job_id}`: status·revision·artifact·history 확인.
+3. `POST /jobs/{job_id}/advance`: `{"expected_revision":0}`부터 갱신된 revision으로 5회 실행.
+4. `GET /jobs/{job_id}/publish-plan`: 검증 통과 후 조회.
+
+`failed`는 현재 revision으로 `/resume`을 호출하여 마지막 성공 상태로 복귀합니다. `rejected`는 수정 입력이나 새 pipeline version이 필요합니다. 동일 request key의 다른 입력과 오래된 revision은 409이고 READY 재실행은 변경이 없습니다. 기본 DB는 `output/jobs.sqlite`이며 `PDF_NOTION_DB`로 지정합니다. 로컬 서버에는 인증이 없습니다. 기본 경로는 tracing 업로드를 끄고 모델·Notion 클라이언트를 생성하지 않습니다.
+
+## 연결 경계와 상세 문서
+
+- [DESIGN.md](DESIGN.md): 중간 표현·교체 가능한 어댑터·상태 전이·구조 검증.
+- [GRAPH_REVIEW.md](GRAPH_REVIEW.md): 합성 SVG의 모의 해설 토글; 실제 PDF 그래프 입력은 미연결.
+- [PROVIDERS.md](PROVIDERS.md), [LIVE_RUN.md](LIVE_RUN.md): Gemini 기본·OpenAI 선택형 제공자, 별도 승인과 단일 실행 원장. 실제 API 시험은 보류 중이며 위 로컬 명령은 키를 읽지 않습니다.
+- [PROVIDER_PUBLICATION.md](PROVIDER_PUBLICATION.md): 완료 원장·승인·현재 근거를 재검증하는 provider 결과의 중립적 검토 게시 계획. fake SDK 결과는 실제 모델 응답이 아닙니다.
+- [NOTION_MCP.md](NOTION_MCP.md): 모의 문제 토글의 호스트 준비·읽기 확인 경계.
+- [STUDY_NOTION.md](STUDY_NOTION.md): 한 절의 새 페이지 인수·pending/confirmed 체크포인트·동일 작업 보존. 실제 MCP dispatch는 호스트가 수행하며 독립 실행 게시 CLI는 없습니다.
+
+실제 Notion create 성공만으로 완료하지 않습니다. 최종 내용·직접 부모·마커·코드·이미지 읽기 확인이 필요합니다. 현재 표시 보정 쓰기는 자동 승인 검토에서 거절되어 중단했고 최종 확인은 pending입니다. 모델·Notion 외부 검증이 재개되기 전에는 실제 모델 결과의 최종 게시가 검증됐다고 표현하지 않습니다.
