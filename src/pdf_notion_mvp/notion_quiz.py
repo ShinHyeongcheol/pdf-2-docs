@@ -34,7 +34,13 @@ class ToggleOperation(Contract):
 
 
 class QuizTogglePlan(Contract):
-    mode: Literal["mock_only"] = "mock_only"
+    mode: Literal["mock_only", "provider_review_only"] = "mock_only"
+    provider_mode: Literal["mock", "gemini", "openai"] = "mock"
+    execution_mode: Literal["authored_mock", "injected", "network_unattested"] = "authored_mock"
+    model: str = ""
+    completion_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    run_id: UUID | None = None
+    provider_attestation_verified: Literal[False] = False
     binding: SectionPage
     source_digest: str
     evidence_digest: str
@@ -94,22 +100,38 @@ def plan_toggles(source: FixtureInput, hierarchy: HierarchicalOutline, layer: Re
         raise ValueError("stale or mismatched quiz provenance")
     if verify_quiz(context, result.batch, 3):
         raise ValueError("quiz failed independent revalidation")
+    return _render_verified_plan(source, result, binding, context)
+
+
+def _render_verified_plan(source, result, binding, context, *, provider="mock", model="",
+                          execution_mode="authored_mock", completion_sha256=None, run_id=None):
+    """Internal renderer: callers must independently revalidate their input boundary."""
     by_id = {b.block_id: b for b in source.document.blocks}
     evidence = {e.block_id: e for e in context.evidence}
     operations = []
     for q in result.batch.questions:
         # Provider-assigned IDs/attempt counts do not alter publication identity.
         content = q.model_dump(exclude={"question_id"})
-        key = digest(["quiz-toggle-v1", context.model_dump(), "mock", content])
+        identity = "mock" if provider == "mock" else ["provider-review-v1", provider, model, execution_mode]
+        key = digest(["quiz-toggle-v1", context.model_dump(), identity, content])
         block_id = q.source_block_ids[0]
         block = by_id[block_id]
-        provenance = json.dumps({"document_id": context.document_id, "version": context.version,
+        provenance_data = {"document_id": context.document_id, "version": context.version,
             "section_id": context.section_id, "source_digest": context.source_digest,
             "evidence_digest": result.evidence_digest, "block_id": block_id,
             "page": block.source.page, "bbox": block.source.bbox.model_dump(),
-            "evidence_layer": evidence[block_id].layer}, ensure_ascii=False, sort_keys=True)
-        payload = toggle("[모의 문제 · 검토 필요] " + q.question, [
-            paragraph("직접 작성한 모의 결과입니다. 실제 모델 생성·의미 진위 검증을 하지 않았습니다."),
+            "evidence_layer": evidence[block_id].layer}
+        if provider == "mock":
+            title = "[모의 문제 · 검토 필요] "
+            disclosure = "직접 작성한 모의 결과입니다. 실제 모델 생성·의미 진위 검증을 하지 않았습니다."
+        else:
+            provenance_data.update(provider=provider, model=model, execution_mode=execution_mode,
+                provider_attestation_verified=False)
+            title = "[주입 실행 · 검토 필요] " if execution_mode == "injected" else "[제공자 결과 · 검토 필요] "
+            disclosure = (f"{provider}/{model} 어댑터의 검토 후보입니다. 원문 인용·빈칸 형식·출처를 재검증했습니다. "
+                "실제 외부 호출 여부·제공자 인증·의미 진위·청구액은 독립 검증하지 않았습니다.")
+        provenance = json.dumps(provenance_data, ensure_ascii=False, sort_keys=True)
+        payload = toggle(title + q.question, [paragraph(disclosure),
             toggle("정답", [paragraph(q.answer)]),
             toggle("해설과 원문 출처", [paragraph(q.explanation), paragraph("출처: " + provenance),
                 paragraph("원본 전사: " + block.text),
@@ -117,8 +139,10 @@ def plan_toggles(source: FixtureInput, hierarchy: HierarchicalOutline, layer: Re
         operations.append(ToggleOperation(operation_key=key, block=payload))
     if len(json.dumps([o.block for o in operations], ensure_ascii=False).encode()) > 100_000:
         raise ValueError("toggle payload exceeds local plan byte limit")
-    return QuizTogglePlan(binding=binding, source_digest=context.source_digest,
-        evidence_digest=result.evidence_digest, operations=operations)
+    return QuizTogglePlan(mode="mock_only" if provider == "mock" else "provider_review_only",
+        provider_mode=provider, execution_mode=execution_mode, model=model,
+        completion_sha256=completion_sha256, run_id=run_id, binding=binding,
+        source_digest=context.source_digest, evidence_digest=result.evidence_digest, operations=operations)
 
 
 def owned_key(block: dict) -> str | None:

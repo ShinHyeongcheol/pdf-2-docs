@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import tempfile
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +15,7 @@ from pydantic import Field
 from .contracts import Contract, FixtureInput
 from .openai_adapter import request_messages
 from .providers import ProviderSettings, build_provider
-from .quiz import GenerationBlocked, QuizBatch, QuizPolicy, QuizWorkflow, prepare_context
+from .quiz import GenerationBlocked, QuizBatch, QuizPolicy, QuizResult, QuizWorkflow, prepare_context
 from .review import HierarchicalOutline, ReviewLayer
 
 PRICE_URL = "https://ai.google.dev/gemini-api/docs/pricing"
@@ -71,6 +72,58 @@ class RunApproval(Contract):
     pricing_and_limits_confirmed: bool = Field(default=False, strict=True)
     model_capabilities_confirmed: bool = Field(default=False, strict=True)
     conditional_cost_understood: bool = Field(default=False, strict=True)
+
+
+class RunCompletion(Contract):
+    run_id: UUID
+    plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["ready_for_review", "failed_human_review"]
+    provider_mode: Literal["gemini", "openai"]
+    execution_mode: Literal["injected", "network_unattested"]
+    request_count: int = Field(ge=0, le=1, strict=True)
+    run_consumed: Literal[True] = True
+    conditional_cost_envelope_usd: Decimal = Field(gt=0, le=1, allow_inf_nan=False)
+    provider_billed_cost_verified: Literal[False] = False
+    provider_usage_verified: Literal[False] = False
+    provider_attestation_verified: Literal[False] = False
+    result: QuizResult
+
+
+class CompletedRunReceipt(Contract):
+    state: Literal["completed"] = "completed"
+    run_id: UUID
+    plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    completion_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provider: Literal["gemini", "openai"]
+    model: str
+    execution_mode: Literal["injected", "network_unattested"]
+    source_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    request_count: int = Field(ge=0, le=1, strict=True)
+
+
+def save_completion_receipt(path: Path, approval: RunApproval, completion: RunCompletion) -> None:
+    # The executor owns this directory. A saved result alone is not publication authority.
+    if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
+        raise GenerationBlocked("invalid reserved run receipt")
+    reserved = json.loads(path.read_text())
+    if reserved != {"run_id": str(approval.spec.run_id), "plan_sha256": approval.plan_sha256,
+                    "state": "consumed_before_key_lookup", "max_requests": 1}:
+        raise GenerationBlocked("reserved run receipt changed")
+    receipt = CompletedRunReceipt(run_id=completion.run_id, plan_sha256=completion.plan_sha256,
+        completion_sha256=fingerprint(completion.model_dump(mode="json")),
+        provider=completion.provider_mode, model=approval.spec.model_snapshot.model,
+        execution_mode=completion.execution_mode, source_digest=completion.result.source_digest,
+        evidence_digest=completion.result.evidence_digest, request_count=completion.request_count)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix="receipt-", delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(receipt.model_dump_json(indent=2)+"\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def cost_envelope(spec: RunSpec) -> Decimal:
@@ -201,7 +254,7 @@ def execute_approved(approval: RunApproval, project_root: Path, *, expected_plan
     if approval.plan_sha256 != expected_plan_sha256:
         raise GenerationBlocked("explicit plan fingerprint required")
     source, hierarchy, layer, _ = validate_plan(approval, project_root, now=now)
-    reserve_run(project_root, approval)  # Failure/timeout never refunds this run ID.
+    receipt_path = reserve_run(project_root, approval)  # Failure/timeout never refunds this run ID.
     requests = 0
     def validate_request(request: httpx.Request):
         nonlocal requests
@@ -223,9 +276,9 @@ def execute_approved(approval: RunApproval, project_root: Path, *, expected_plan
         result.status = "failed_human_review"
         result.batch = None
         result.errors = ["approved_request_not_observed"]
-    return {"run_id": str(approval.spec.run_id), "plan_sha256": approval.plan_sha256,
-        "status": result.status, "provider_mode": result.provider_mode,
-        "request_count": requests, "run_consumed": True,
-        "conditional_cost_envelope_usd": str(cost_envelope(approval.spec)),
-        "provider_billed_cost_verified": False, "provider_usage_verified": False,
-        "result": result.model_dump(mode="json")}
+    completion = RunCompletion(run_id=approval.spec.run_id, plan_sha256=approval.plan_sha256,
+        status=result.status, provider_mode=result.provider_mode,
+        execution_mode="injected" if client_factory is not None or key_provider is not None else "network_unattested",
+        request_count=requests, conditional_cost_envelope_usd=cost_envelope(approval.spec), result=result)
+    save_completion_receipt(receipt_path, approval, completion)
+    return completion.model_dump(mode="json")
