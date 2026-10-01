@@ -1,0 +1,76 @@
+{
+  "cases": [
+    {
+      "case_id": "checkpoint",
+      "kind": "answerable",
+      "question": "재개 체크포인트",
+      "expected_status": "ready_for_review",
+      "expected_block_ids": [
+        "rag-checkpoint"
+      ]
+    },
+    {
+      "case_id": "confirmed-correction",
+      "kind": "answerable",
+      "question": "인용 검증",
+      "expected_status": "ready_for_review",
+      "expected_block_ids": [
+        "rag-corrected"
+      ]
+    },
+    {
+      "case_id": "second-page",
+      "kind": "answerable",
+      "question": "문서 수정",
+      "expected_status": "ready_for_review",
+      "expected_block_ids": [
+        "rag-version",
+        "rag-corrected"
+      ]
+    },
+    {
+      "case_id": "unknown",
+      "kind": "no_evidence",
+      "question": "해왕성 질량",
+      "expected_status": "unknown",
+      "expected_block_ids": []
+    },
+    {
+      "case_id": "pending-candidate",
+      "kind": "candidate",
+      "question": "미확정 비행",
+      "expected_status": "unknown",
+      "expected_block_ids": []
+    },
+    {
+      "case_id": "derived-candidate",
+      "kind": "candidate",
+      "question": "파생 초능력",
+      "expected_status": "unknown",
+      "expected_block_ids": []
+    },
+    {
+      "case_id": "bad-quote",
+      "kind": "wrong_quote",
+      "question": "재개 체크포인트",
+      "expected_status": "failed_human_review",
+      "expected_block_ids": []
+    },
+    {
+      "case_id": "mixed-source",
+      "kind": "source_mix",
+      "question": "재개 체크포인트",
+      "expected_status": "failed_human_review",
+      "expected_block_ids": []
+    },
+    {
+      "case_id": "new-version",
+      "kind": "reindex",
+      "question": "복구지점부터",
+      "expected_status": "ready_for_review",
+      "expected_block_ids": [
+        "rag-checkpoint"
+      ]
+    }
+  ]
+}
