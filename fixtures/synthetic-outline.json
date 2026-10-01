@@ -1,0 +1,36 @@
+{
+  "document_id": "synthetic-training",
+  "version": "fixture-v1",
+  "nodes": [
+    {
+      "node_id": "unit",
+      "parent_id": null,
+      "title": "직접 작성한 합성 장",
+      "source_pages": [
+        1,
+        2
+      ],
+      "block_ids": [],
+      "review_status": "candidate"
+    },
+    {
+      "node_id": "unit.part",
+      "parent_id": "unit",
+      "title": "페이지를 잇는 합성 절",
+      "source_pages": [
+        1,
+        2
+      ],
+      "block_ids": [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5",
+        "b6",
+        "b7"
+      ],
+      "review_status": "candidate"
+    }
+  ]
+}

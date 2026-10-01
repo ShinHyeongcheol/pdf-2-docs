@@ -7,7 +7,7 @@ LangGraph가 실제 작업 노드를 실행하고, LangChain Core의 LCEL 체인
 **현재 가능한 것:** 합성 IR의 텍스트·이미지 참조·표·코드 보존, 출처/좌표 검증, SQLite 상태 저장,
 중간 실패 후 재개, 동일 입력 중복 방지, FastAPI 상태 조회, 실제 PDF의 텍스트 레이어/OCR 필요 여부 검사,
 Mac 내장 Apple Vision OCR의 텍스트·좌표·신뢰도와 원본 페이지 래스터 보존.
-**아직 없는 것:** OCR의 의미적 정확성 검증, PDF 표·코드·그림의 의미적 복원, 생성 모델,
+**아직 없는 것:** OCR의 의미적 정확성 검증, PDF 표·코드·그림의 자동 의미적 복원, 생성 모델,
 앱 내부 Notion API 쓰기, 의미적 설명 생성, RAG.
 게시 계획은 Notion HTTP payload가 아닌 중립적 검토 자료입니다. `ready`는 이 dry-run 자료가 준비되었다는 뜻입니다.
 
@@ -84,3 +84,26 @@ CLI는 IR 파일의 부모 폴더를 신뢰할 에셋 범위로 사용합니다.
 기능별 계약과 한계는 [DESIGN.md](DESIGN.md)에 있습니다. `tests/`는 상태 전이·재시작·예외 복구·동시성·
 중복 방지·검증 차단·API 동작을 검증합니다. 실제 원문 통합 테스트는 로컬 환경변수로 선택하며
 원문과 추출 결과를 fixture 또는 Git에 포함하지 않습니다.
+
+## 계층 목차와 별도 교정 레이어
+
+```bash
+.venv/bin/python -m pdf_notion_mvp.review_cli fixtures/synthetic.json --outline fixtures/synthetic-outline.json --layer fixtures/synthetic-review.json --output output/synthetic-review.json
+```
+
+`HierarchicalOutline`은 부모 노드와 블록을 소유하는 잎을 구분합니다. 트리의 잎을 펼쳤을 때
+원본 IR 전체 블록이 정확히 한 번, 입력 순서대로 나타나야 합니다. 선언 페이지는 실제 블록의 페이지와
+일치해야 하며 문서 전체를 포함해야 합니다. 페이지가 여러 개인 절도 허용합니다. `ProvidedHierarchyAdapter`로
+명시적 목차를 기존 복원·검증 경계에 적용할 수 있습니다. 목차 스냅샷의 SHA를 workflow version에
+포함하므로 같은 원본에 다른 목차를 사용한 작업은 구분하고, 동일 목차의 재시작은 재사용합니다. 기본 자동 계획을 대체하거나 전역 설정을 바꾸지 않습니다.
+
+`ReviewLayer`는 문서 버전·전체 IR digest에 결합된 별도 데이터입니다. 교정은 block ID, 원본 OCR,
+출처 page/bbox, 제안 텍스트, 근거 이미지 ID/영역, 확인 상태를 저장합니다. 확인된 교정만 `effective_text`에
+적용하고 후보는 `pending_corrections`로 분리합니다. 원본 블록과 출처는 수정하지 않습니다.
+표·코드를 표시용으로 조립한 파생 fragment는 원본 block ID와 교정 ID의 계보를 유지합니다.
+원문 전사 확인과 기술적 주장의 정확성 검증은 다릅니다. 확인 상태는 검토자의 명시적 판단이며
+코드/API 실행이나 진위 판정 기능이 아닙니다. 공백 정규화·애매한 글자·잘린 출력은 근거와 후보에 기록합니다.
+
+OCR 입력은 기존 페이지 래스터/파일 SHA/신뢰 폴더 검증도 통과해야 합니다. CLI 출력이 원본·목차·교정
+입력 파일과 같은 경로면 실행을 거절합니다. `review_cli`는 모델 호출이나 Notion 쓰기를 하지 않습니다.
+실제 자료의 목차·교정 파일·결과는 저장소 밖에 보관하고 공개 fixture는 직접 작성한 합성 자료만 사용합니다.

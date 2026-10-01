@@ -1,0 +1,32 @@
+{
+  "document_id": "synthetic-training",
+  "version": "fixture-v1",
+  "source_digest": "2a31db4ef00e9be36c669c47d48d2db3d6e59177e1b2863124ae4613e3ff1f2c",
+  "corrections": [],
+  "fragments": [
+    {
+      "fragment_id": "synthetic-code",
+      "section_id": "unit.part",
+      "source_block_ids": [
+        "b4"
+      ],
+      "kind": "code",
+      "text": "def double(value):\n    return value * 2\n",
+      "status": "confirmed",
+      "basis": "직접 작성한 합성 코드 표시",
+      "correction_ids": []
+    },
+    {
+      "fragment_id": "synthetic-candidate",
+      "section_id": "unit.part",
+      "source_block_ids": [
+        "b2"
+      ],
+      "kind": "text",
+      "text": "직접 작성한 해석 후보",
+      "status": "candidate",
+      "basis": "후보 분리 검증용 합성 내용",
+      "correction_ids": []
+    }
+  ]
+}

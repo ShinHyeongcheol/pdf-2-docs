@@ -80,3 +80,22 @@ class DryRunNotionPlanner:
                     section_title=section.title, block=block.model_copy(deep=True),
                 ))
         return PublishPlan(operations=operations)
+
+
+class ProvidedHierarchyAdapter(LocalKnowledgeAdapter):
+    """Use an explicitly supplied hierarchy with the existing restoration boundary."""
+
+    def __init__(self, hierarchy):
+        super().__init__()
+        from .review import HierarchicalOutline
+        self._hierarchy_json = HierarchicalOutline.model_validate(hierarchy.model_dump()).model_dump_json()
+
+    @property
+    def configuration_digest(self) -> str:
+        import hashlib
+        return hashlib.sha256(self._hierarchy_json.encode()).hexdigest()
+
+    def plan(self, document: DocumentIR) -> Outline:
+        from .review import validate_outline
+        from .review import HierarchicalOutline
+        return validate_outline(document, HierarchicalOutline.model_validate_json(self._hierarchy_json))
