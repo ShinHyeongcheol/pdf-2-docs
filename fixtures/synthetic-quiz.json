@@ -1,0 +1,14 @@
+{
+  "questions": [
+    {
+      "question_id": "synthetic-question-1",
+      "question": "자료의 빈칸을 채우세요: 성공한 단계는 보존하고 마지막 [빈칸]에서 다시 실행합니다.",
+      "answer": "체크포인트",
+      "explanation": "근거 원문: 성공한 단계는 보존하고 마지막 체크포인트에서 다시 실행합니다.",
+      "source_block_ids": [
+        "b7"
+      ],
+      "source_quote": "성공한 단계는 보존하고 마지막 체크포인트에서 다시 실행합니다."
+    }
+  ]
+}

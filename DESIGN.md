@@ -77,3 +77,30 @@ layout fragments. Every correction binds to the original text, provenance and do
 Candidate corrections do not modify effective text; confirmed fragments cannot cite candidate corrections. Fragment text is an
 explicit review assertion, not a semantic-verification result. Original blocks are neither replaced nor executed. Review output
 is local and needs human review. This path does not extend the generic HTTP API or implement an automated Notion writer.
+
+
+## Grounded quiz generation (OpenAI optional)
+
+A separate LangGraph executes generation and independent extractive validation with at most three attempts. No existing
+job/API or review record changes its meaning. The context is rebuilt from the explicit FixtureInput, outline and review layer;
+saved review output cannot certify itself. Synthetic evidence is authored, OCR evidence requires confirmed transcription
+records, and pending corrections cannot supply evidence. Source identity/version/IR digest and evidence digest remain in output.
+The first exercise type is cloze; exact source quote and answer/question/explanation checks bound unsupported assertions.
+This is provenance/extractive fidelity, not semantic grading or a factual-truth guarantee. Results always need human review.
+
+The optional LangChain OpenAI adapter defers key/client construction until explicit live/budget/capability approval and positive
+limits. It uses native JSON Schema, required fields, additionalProperties=false, timeout and zero SDK retries. The final request
+body is size-checked before transport, with the official endpoint and no inherited proxy configuration. Bounded attempts and an
+in-memory adapter call ledger limit requests, not dollar spend or cross-process retries. The offline CLI cannot enable it.
+Raw OCR, reviewed derivation and generated output are separate. Document instructions remain untrusted data and no tools or code
+execution are offered. Vision remains a future evidence-adapter extension; source raster contracts remain available separately.
+
+Official capability references checked on 2026-10-01 (documentation checks only; no account/API request):
+- https://developers.openai.com/api/docs/guides/structured-outputs (required fields, native schema and refusal/incomplete handling)
+- https://developers.openai.com/api/docs/models/gpt-4.1-mini (documented text/image input and structured outputs example; not a default or recommendation)
+- https://developers.openai.com/api/docs/guides/images-vision (image-capable model/detail compatibility and limitations; no image sent here)
+- https://docs.langchain.com/oss/python/integrations/chat/openai (native JSON Schema, timeout, retries and explicit base URL)
+
+The available session had no callable OpenAI docs MCP or platform-api-key guide. Official web docs were used. The user's explicit
+instruction to provide a key later kept credential setup and live requests out of this work. No pricing table or model default is
+embedded. Capabilities and account access must be confirmed again for the chosen model before any live call.

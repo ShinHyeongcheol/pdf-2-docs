@@ -7,7 +7,7 @@ LangGraph가 실제 작업 노드를 실행하고, LangChain Core의 LCEL 체인
 **현재 가능한 것:** 합성 IR의 텍스트·이미지 참조·표·코드 보존, 출처/좌표 검증, SQLite 상태 저장,
 중간 실패 후 재개, 동일 입력 중복 방지, FastAPI 상태 조회, 실제 PDF의 텍스트 레이어/OCR 필요 여부 검사,
 Mac 내장 Apple Vision OCR의 텍스트·좌표·신뢰도와 원본 페이지 래스터 보존.
-**아직 없는 것:** OCR의 의미적 정확성 검증, PDF 표·코드·그림의 자동 의미적 복원, 생성 모델,
+**아직 없는 것:** OCR의 의미적 정확성 검증, PDF 표·코드·그림의 자동 의미적 복원, 실제 모델 응답 품질 검증,
 앱 내부 Notion API 쓰기, 의미적 설명 생성, RAG.
 게시 계획은 Notion HTTP payload가 아닌 중립적 검토 자료입니다. `ready`는 이 dry-run 자료가 준비되었다는 뜻입니다.
 
@@ -110,3 +110,41 @@ CLI는 IR 파일의 부모 폴더를 신뢰할 에셋 범위로 사용합니다.
 OCR 입력은 기존 페이지 래스터/파일 SHA/신뢰 폴더 검증도 통과해야 합니다. CLI 출력이 원본·목차·교정
 입력 파일과 같은 경로면 실행을 거절합니다. `review_cli`는 모델 호출이나 Notion 쓰기를 하지 않습니다.
 실제 자료의 목차·교정 파일·결과는 저장소 밖에 보관하고 공개 fixture는 직접 작성한 합성 자료만 사용합니다.
+
+
+## OpenAI 선택 어댑터와 모의 문제 생성
+
+```bash
+UV_CACHE_DIR=/tmp/pdf-notion-uv-cache uv sync --frozen --extra test --extra pdf --extra openai
+.venv/bin/python -m pdf_notion_mvp.quiz_cli
+.venv/bin/python -m pytest -q
+```
+
+기본 CLI는 직접 작성한 합성 응답을 LangChain runnable로 생성하고 LangGraph의 생성 → 독립 검증 →
+제한 재시도 분기로 처리합니다. 실제 OpenAI 요청을 켜는 CLI 옵션은 없습니다. 결과는
+`output/mock-quiz.json`에 남고 검증 성공도 `ready_for_review`, 반복 실패는 `failed_human_review`입니다.
+
+첫 문제 유형은 근거 인용에 따른 빈칸 문제입니다. 답은 정확한 인용문 일부, 해설은 원문 인용으로
+제한합니다. 출처 없는 참조·인용·정답·질문/해설의 추가 주장·빈 답·문제 중복을 독립적으로 차단합니다.
+자유로운 해설이나 원문의 사실성 판정은 제공하지 않습니다. 성공해도 사람이 검토해야 합니다.
+OCR 근거는 확인된 교정 기록의 body text만 사용하고 미확인/교정 후보는 제외합니다. raw IR은 보존하며
+LLM context에는 확인된 파생 텍스트와 출처만 담습니다. 그림·표·코드의 의미 생성은 추후 별도 근거 어댑터로
+확장할 범위이고 이번 어댑터는 텍스트만 사용합니다. PDF의 지시문은 신뢰 명령이 아닌 인용 자료입니다.
+
+`OpenAIQuizAdapter`는 LangChain `ChatOpenAI.with_structured_output`을 사용합니다. 생성자에서 SDK/키를
+초기화하지 않습니다. 기본 `QuizPolicy`는 네트워크를 차단합니다. 실제 요청은 사용자가 키·모델·기능 지원·
+전송 자료·예산을 확인하고 `allow_network`, `budget_confirmed`, `capabilities_confirmed`를 명시적으로
+설정해야 가능하며, 이번 개발에서 실제 요청은 실행하지 않았습니다.
+
+키는 승인된 live 호출 경로 안에서만 `OPENAI_API_KEY` 환경변수로 받습니다. 실제 `.env`는 Git 제외,
+값 없는 `.env.example`만 포함합니다. 파일·키체인에서 키를 찾거나 `.env`를 자동 로드하지 않습니다.
+모델은 `QuizPolicy.model` 또는 승인된 live 경로의 `PDF_NOTION_OPENAI_MODEL`로 지정하고 기본 모델은 없습니다.
+설정과 key를 결과·로그에 저장하지 않습니다. 문서상의 기능 지원이 해당 계정의 모델 접근을 보장하지는 않습니다.
+
+호출 수·최종 요청 바이트·출력 토큰·timeout 한도를 명시해야 하며, SDK 자동 재시도는 0입니다.
+Graph 시도는 최대 3회이고 실패도 호출 예산을 소비합니다. 예산은 adapter 인스턴스 수명 내 요청 수 한도이며
+분산/영속 비용 원장이나 달러 단위 요금 상한은 아닙니다. 실제 시작 전 선택 모델의 현재 가격과 예산 승인을
+따로 확인해야 합니다. 공식 OpenAI endpoint를 명시하고 실제 SDK 요청 크기를 전송 전에 검사합니다.
+
+가짜 HTTP transport 테스트는 실제 SDK 직렬화와 모의 응답 해석만 검증합니다. API 키 유효성, 계정 권한,
+모델 가용성, 실제 응답 품질·요금·latency·vision 통합은 아직 검증하지 않았습니다.

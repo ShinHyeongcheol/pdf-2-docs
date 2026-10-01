@@ -12,6 +12,9 @@ dependencies = ["pydantic>=2.13,<3", "fastapi>=0.142,<1", "uvicorn>=0.54,<1", "l
 [project.optional-dependencies]
 test = ["pytest>=9,<10", "httpx>=0.28,<1"]
 pdf = ["pdfplumber>=0.11,<1"]
+openai = [
+    "langchain-openai>=1,<2",
+]
 
 [project.scripts]
 pdf-notion = "pdf_notion_mvp.cli:main"
