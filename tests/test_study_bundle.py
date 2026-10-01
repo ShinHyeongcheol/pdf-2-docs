@@ -116,6 +116,9 @@ def test_html_escapes_every_untrusted_display_field(tmp_path,lesson):
     text=(final/'index.html').read_text()
     assert '<script' not in text and '&lt;script&gt;' in text
     assert 'Content-Security-Policy' in text and 'default-src' in text
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in text
+    assert '<summary>정답과 근거 인용</summary>' in text
+    assert '<summary>교정 후보 제안 · 본문 미적용</summary>' in text
     assert 'src="http' not in text and '<iframe' not in text
 
 

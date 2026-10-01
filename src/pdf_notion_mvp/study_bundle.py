@@ -99,8 +99,9 @@ def render(bundle):
         return f'<a href="#page-{page}">원본 p.{page}</a> · 좌표 {esc(source["bbox"])}'
     parts = ['<!doctype html><html lang="ko"><meta charset="utf-8">',
              '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src \'self\' file:; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">',
+             '<meta name="viewport" content="width=device-width, initial-scale=1">',
              f'<title>{esc(bundle["title"])} · 절 학습 검토</title>',
-             '<style>body{max-width:1000px;margin:2rem auto;padding:0 1rem;font:17px/1.7 sans-serif}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem}img{max-width:100%}article{border-top:1px solid #bbb;padding:1rem 0}summary{cursor:pointer}small{display:block}</style>',
+             '<style>body{max-width:1000px;margin:2rem auto;padding:0 1rem;font:17px/1.7 sans-serif;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem}img{max-width:100%}article{border-top:1px solid #bbb;padding:1rem 0}summary{cursor:pointer}small{display:block}</style>',
              f'<body><h1>{esc(bundle["title"])}</h1>',
              f'<p>절 목차 상태: {esc(bundle["outline_review_status"])} · 대상 페이지 {esc(bundle["selected_source_pages"])} · 전체 출처 {bundle["full_source_pages"]}쪽 / {bundle["full_source_blocks"]}블록</p>']
     parts += [f'<p>{esc(text)}</p>' for text in bundle['disclosures']]
@@ -113,6 +114,8 @@ def render(bundle):
         if block['kind'] == 'text':
             parts.append(f'<p>{esc(entry["effective_text"])}</p>')
             parts.append(details('원본 OCR 전사' if block['source']['method']=='ocr' else '원본 텍스트', block['text']))
+            if correction and correction['status']=='candidate':
+                parts.append(details('교정 후보 제안 · 본문 미적용', correction['proposed_text']))
             if correction: parts.append(details('교정 제안과 검토 출처 · '+correction['status'], correction))
         else: parts.append(details('원본 '+block['kind']+' · 의미 미검증', block))
         parts.append('</article>')
@@ -126,7 +129,11 @@ def render(bundle):
     parts.append(f'<p>상태: {esc(bundle["local_quiz"]["status"])} · 모델 생성 아님 · 사람의 검토 필요</p>')
     for item in bundle['local_quiz']['questions']:
         parts.append(f'<article><p>{esc(item["question"]["question"])}</p>{source_link(item["source"])}')
-        parts.append(details('정답·인용·검토 계보', item)+'</article>')
+        q = item['question']
+        parts.append('<details><summary>정답과 근거 인용</summary>'
+                     + f'<p>정답: {esc(q["answer"])}</p><blockquote>{esc(q["source_quote"])}</blockquote>'
+                     + f'<p>{esc(q["explanation"])}</p></details>')
+        parts.append(details('문제 출처·검토 계보', item)+'</article>')
     parts.append('<h2>로컬 인용 답변</h2>')
     answer = bundle['local_answer']
     parts.append(f'<p>질문: {esc(answer["question"])} · 상태: {esc(answer["status"])} · 키워드 검색 / 모의 인용 조립</p>')
