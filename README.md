@@ -1,3 +1,5 @@
+제공자 기본 선택은 **Gemini**, OpenAI는 선택형입니다. 키 위치·설정·실제 실행 경계는 [PROVIDERS.md](PROVIDERS.md)를 참고하세요. 현재 CLI는 모의 실행과 설정 확인만 제공합니다.
+
 # pdf-2-docs
 
 문서 구조와 출처를 유지하며 `목차 → 절별 복원 → 독립 검증 → 게시 계획`을 만드는 Python 프로젝트입니다.
@@ -136,8 +138,10 @@ LLM context에는 확인된 파생 텍스트와 출처만 담습니다. 그림·
 전송 자료·예산을 확인하고 `allow_network`, `budget_confirmed`, `capabilities_confirmed`를 명시적으로
 설정해야 가능하며, 이번 개발에서 실제 요청은 실행하지 않았습니다.
 
-키는 승인된 live 호출 경로 안에서만 `OPENAI_API_KEY` 환경변수로 받습니다. 실제 `.env`는 Git 제외,
-값 없는 `.env.example`만 포함합니다. 파일·키체인에서 키를 찾거나 `.env`를 자동 로드하지 않습니다.
+직접 `OpenAIQuizAdapter`를 사용하는 기존 경로는 승인된 호출 안에서 `OPENAI_API_KEY` 환경변수를
+받습니다. 공통 `build_provider` 경로는 프로젝트 루트를 명시하면 승인 후 선택된 키만 `.env`에서
+읽을 수 있습니다. 실제 `.env`는 Git에서 제외하고 값 없는 `.env.example`만 포함합니다. 전체 파일을
+환경에 자동 로드하거나 키체인을 검색하지 않습니다. 자세한 설정은 [PROVIDERS.md](PROVIDERS.md)를 참고하세요.
 모델은 `QuizPolicy.model` 또는 승인된 live 경로의 `PDF_NOTION_OPENAI_MODEL`로 지정하고 기본 모델은 없습니다.
 설정과 key를 결과·로그에 저장하지 않습니다. 문서상의 기능 지원이 해당 계정의 모델 접근을 보장하지는 않습니다.
 

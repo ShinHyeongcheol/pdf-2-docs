@@ -1,7 +1,8 @@
 # 기능과 계약
 
 이 MVP는 합성 IR 또는 로컬 OCR 후보 IR을 받아 Notion 게시 **계획**을 만든다. 실제 PDF 검사와
-Mac의 로컬 Vision OCR을 제공한다. 생성 모델 호출과 앱 내부 Notion 쓰기는 아직 구현하지 않았다.
+Mac의 로컬 Vision OCR을 제공한다. 생성 모델 어댑터는 기본 차단 상태이며 모의 응답으로만 검증했다.
+앱 내부의 실제 Notion 쓰기는 아직 구현하지 않았다.
 외부 문서 내용은 이 파일에 포함하지 않는다.
 
 | 기능 | 입력 → 출력 | 책임과 검증 |
@@ -78,6 +79,22 @@ Candidate corrections do not modify effective text; confirmed fragments cannot c
 explicit review assertion, not a semantic-verification result. Original blocks are neither replaced nor executed. Review output
 is local and needs human review. This path does not extend the generic HTTP API or implement an automated Notion writer.
 
+
+## Configurable providers
+
+ProviderSettings selects Gemini by default or OpenAI explicitly. It has no model default and requires
+an explicit user-approved model allowlist in addition to QuizPolicy capability approval. Provider choice,
+model ID syntax and allowlist are checked before key loading. Keys use a selected-name loader, optionally
+from an explicitly supplied project-root .env only after the delegate's network/byte/output/call gates.
+There are no custom endpoint settings or automatic cross-provider retries. Provider-specific SDK adapters
+share the existing QuizGenerator/result/verifier contracts, so further providers require new explicit
+adapters and registry selection, not endpoint substitution. Tracing is disabled in the quiz graph context.
+
+Gemini uses the current Google GenAI SDK through LangChain with native JSON schema, explicit Developer
+API backend, zero SDK retries, seconds passed to LangChain (which converts to SDK milliseconds), fixed endpoint and finalized request byte guard.
+One invocation permits one physical request. Tests inject fabricated keys and HTTP MockTransport only;
+no account, actual model capability, price or live response was verified. See PROVIDERS.md for exact
+configuration semantics, remaining budgets and official documentation.
 
 ## Grounded quiz generation (OpenAI optional)
 
