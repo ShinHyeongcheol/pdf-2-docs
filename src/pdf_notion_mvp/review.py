@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from .contracts import (
-    Block, Box, Contract, DocumentIR, Outline, Section, Source, TextBlock,
+    Block, Box, Contract, DocumentIR, FixtureInput, Outline, Section, Source, TextBlock,
 )
 
 
@@ -141,9 +141,12 @@ class ReviewResult(Contract):
     semantic_reading_order_verified: Literal[False] = False
 
 
-def apply_review(document: DocumentIR, hierarchy: HierarchicalOutline, layer: ReviewLayer, asset_root: Path | None = None) -> ReviewResult:
-    before = document.model_dump()
-    original = DocumentIR.model_validate(before)
+def apply_review(source: FixtureInput, hierarchy: HierarchicalOutline, layer: ReviewLayer, asset_root: Path | None = None) -> ReviewResult:
+    # Keep the explicit input mode and validate its provenance at this public boundary.
+    # Mutable model instances must not bypass the same contract enforced by the CLI.
+    before = source.model_dump()
+    validated = FixtureInput.model_validate(before)
+    original = validated.document
     hierarchy = HierarchicalOutline.model_validate(hierarchy.model_dump())
     layer = ReviewLayer.model_validate(layer.model_dump())
     outline = validate_outline(original, hierarchy)
@@ -204,8 +207,8 @@ def apply_review(document: DocumentIR, hierarchy: HierarchicalOutline, layer: Re
             candidate_fragments=[f for f in fragments if f.status == "candidate"],
             pending_corrections=[c for c in layer.corrections if c.block_id in section.block_ids and c.status == "candidate"],
         ))
-    if document.model_dump() != before:
+    if source.model_dump() != before:
         raise ValueError("source mutated during review")
     result = ReviewResult(source_digest=document_digest(original), original=original, hierarchy=hierarchy, layer=layer, sections=sections,
-        checks=["source_version_and_digest", "all_pages_covered", "blocks_covered_once", "input_ir_order_preserved", "source_unmodified", "correction_snapshot_and_visual_lineage", "candidates_not_applied", "fragment_lineage", "source_asset_verification"])
+        checks=["input_mode_and_provenance", "source_version_and_digest", "all_pages_covered", "blocks_covered_once", "input_ir_order_preserved", "source_unmodified", "correction_snapshot_and_visual_lineage", "candidates_not_applied", "fragment_lineage", "source_asset_verification"])
     return ReviewResult.model_validate(result.model_dump())

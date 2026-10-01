@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from pdf_notion_mvp.adapters import FixtureExtractor, DryRunNotionPlanner, ProvidedHierarchyAdapter
-from pdf_notion_mvp.contracts import Status
+from pdf_notion_mvp.contracts import ExtractionInfo, FixtureInput, Status
 from pdf_notion_mvp.review import (HierarchicalOutline, ReviewLayer, Correction, DerivedFragment, apply_review, document_digest, validate_outline)
 from pdf_notion_mvp.store import JobStore
 from pdf_notion_mvp.workflow import Workflow
@@ -34,7 +34,7 @@ def correction_source(source):
 
 def test_hierarchy_cross_page_and_pipeline(source, hierarchy, layer, tmp_path):
     before = source.document.model_dump()
-    result = apply_review(source.document, hierarchy, layer)
+    result = apply_review(source, hierarchy, layer)
     assert len(result.sections) == 1
     assert [b.block_id for b in result.sections[0].source_blocks] == [b.block_id for b in source.document.blocks]
     assert result.original.model_dump() == before == source.document.model_dump()
@@ -77,11 +77,11 @@ def test_candidate_not_applied_confirmed_separate(source, hierarchy):
     doc, c = correction_source(source)
     layer = ReviewLayer(document_id=doc.document_id, version=doc.version, source_digest=document_digest(doc), corrections=[c])
     before = doc.model_dump()
-    pending = apply_review(doc, hierarchy, layer)
+    pending = apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer)
     assert pending.sections[0].effective_text[c.block_id] == c.original_text
     assert len(pending.sections[0].pending_corrections) == 1
     layer.corrections[0].status = "confirmed"
-    confirmed = apply_review(doc, hierarchy, layer)
+    confirmed = apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer)
     assert confirmed.sections[0].effective_text[c.block_id] == c.proposed_text
     assert confirmed.original.model_dump() == before == doc.model_dump()
     confirmed.sections[0].source_blocks[1].text = "mutated output"
@@ -99,7 +99,7 @@ def test_correction_rejects_false_lineage(source, hierarchy, change):
     if change == "duplicate": layer.corrections.append(c.model_copy(deep=True))
     if change == "digest": layer.source_digest = "0" * 64
     # Mutations happen before invocation: boundary validation must still catch them.
-    with pytest.raises(ValueError): apply_review(doc, hierarchy, layer)
+    with pytest.raises(ValueError): apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer)
 
 
 def test_fragment_candidates_and_lineage(source, hierarchy):
@@ -107,15 +107,15 @@ def test_fragment_candidates_and_lineage(source, hierarchy):
     fragment = DerivedFragment(fragment_id="layout-1", section_id="unit.part", source_block_ids=[c.block_id], kind="text",
         text=c.proposed_text, status="candidate", basis="합성 재배치", correction_ids=[c.correction_id])
     layer = ReviewLayer(document_id=doc.document_id, version=doc.version, source_digest=document_digest(doc), corrections=[c], fragments=[fragment])
-    result = apply_review(doc, hierarchy, layer)
+    result = apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer)
     assert not result.sections[0].confirmed_fragments
     assert result.sections[0].candidate_fragments[0].text == c.proposed_text
     layer.fragments[0].status = "confirmed"
-    with pytest.raises(ValueError): apply_review(doc, hierarchy, layer)
+    with pytest.raises(ValueError): apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer)
     layer.corrections[0].status = "confirmed"
-    assert apply_review(doc, hierarchy, layer).sections[0].confirmed_fragments
+    assert apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer).sections[0].confirmed_fragments
     layer.fragments[0].source_block_ids = ["unknown"]
-    with pytest.raises(ValueError): apply_review(doc, hierarchy, layer)
+    with pytest.raises(ValueError): apply_review(FixtureInput(kind="synthetic_ir", document=doc), hierarchy, layer)
 
 
 def test_cli_prevents_input_overwrite(source, hierarchy, layer, tmp_path, monkeypatch):
@@ -155,3 +155,38 @@ def test_cli_prevents_hardlink_overwrite(source, hierarchy, layer, tmp_path, mon
     with pytest.raises(SystemExit) as exc: main()
     assert exc.value.code == 2
     assert (tmp_path / "source").read_text() == source.model_dump_json()
+
+
+@pytest.mark.parametrize("claimed_mode", ["ocr_ir", "synthetic_ir"])
+def test_public_review_rejects_downgraded_ocr_provenance(source, claimed_mode):
+    # A coherent hierarchy/digest cannot hide OCR origin by erasing metadata/assets.
+    doc = source.document.model_copy(deep=True)
+    doc.blocks = [b for b in doc.blocks if b.kind == "text"]
+    for block in doc.blocks:
+        block.source.method = "ocr"
+        block.source.confidence = 0.9
+    doc.extraction = ExtractionInfo()
+    hierarchy = HierarchicalOutline(document_id=doc.document_id, version=doc.version, nodes=[{
+        "node_id":"whole", "title":"합성 검증", "source_pages":[1,2],
+        "block_ids":[b.block_id for b in doc.blocks],
+    }])
+    layer = ReviewLayer(document_id=doc.document_id, version=doc.version, source_digest=document_digest(doc))
+    # model_construct mimics post-construction mutation and must be revalidated.
+    spoofed = FixtureInput.model_construct(kind=claimed_mode, document=doc)
+    with pytest.raises(ValidationError): apply_review(spoofed, hierarchy, layer, asset_root=None)
+
+
+def test_public_review_rejects_bare_document_ir(source, hierarchy, layer):
+    with pytest.raises(ValidationError): apply_review(source.document, hierarchy, layer)
+
+
+def test_public_review_requires_ocr_assets(source, hierarchy, tmp_path):
+    doc = source.document.model_copy(deep=True)
+    doc.extraction = ExtractionInfo(engine="synthetic-ocr-test", pages_processed=[1,2], human_review_required=True)
+    for block in doc.blocks:
+        block.source.method = "ocr"
+        block.source.confidence = 0.9
+    layer = ReviewLayer(document_id=doc.document_id, version=doc.version, source_digest=document_digest(doc))
+    ocr = FixtureInput(kind="ocr_ir", document=doc)
+    with pytest.raises(ValueError, match="raster"):
+        apply_review(ocr, hierarchy, layer, asset_root=tmp_path)
