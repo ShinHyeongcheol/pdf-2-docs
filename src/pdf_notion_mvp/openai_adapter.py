@@ -32,9 +32,11 @@ def request_messages(context: LessonContext, policy: QuizPolicy, feedback: list[
 class OpenAIQuizAdapter:
     mode = "openai"
 
-    def __init__(self, *, client_factory: Callable | None = None, key_provider: Callable[[], str | None] | None = None):
+    def __init__(self, *, client_factory: Callable | None = None, key_provider: Callable[[], str | None] | None = None,
+                 request_validator: Callable[[httpx.Request], None] | None = None):
         self._client_factory = client_factory
         self._key_provider = key_provider
+        self._request_validator = request_validator
         self._calls = 0
         self._budget_lock = Lock()
 
@@ -73,6 +75,8 @@ class OpenAIQuizAdapter:
                 raise GenerationBlocked("only the explicit OpenAI chat completion endpoint is allowed")
             if len(request.content) > policy.max_request_bytes:
                 raise GenerationBlocked("serialized request byte limit exceeded")
+            if self._request_validator is not None:
+                self._request_validator(request)
         with httpx.Client(trust_env=False, timeout=policy.timeout_seconds, event_hooks={"request":[guard_request]}) as http:
             kwargs = dict(model=policy.model, api_key=key, base_url="https://api.openai.com/v1",
                 max_retries=0, timeout=policy.timeout_seconds, max_completion_tokens=policy.max_output_tokens,

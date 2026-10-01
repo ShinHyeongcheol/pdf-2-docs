@@ -42,7 +42,9 @@ export PDF_NOTION_APPROVED_MODELS='<지원 기능을 승인한 모델 ID>'
 
 `provider_cli`는 `--provider gemini|openai`, `--model ...`도 받습니다. 설정 여부만 확인하고 키 조회,
 파일 로딩, SDK 생성과 네트워크 호출은 하지 않습니다. 기존 `quiz_cli`는 authored mock 전용입니다.
-**현재 유료/live 실행 CLI는 없습니다.** 키를 저장하거나 이 명령을 실행해도 자료가 전송되지 않습니다.
+별도 [단일 실행 CLI](LIVE_RUN.md)는 mock 기본값과 오프라인 승인 제안을 제공하고, 명시적
+단일 승인 파일이 있을 때만 Gemini 합성 샘플 live 경로를 엽니다. 키를 저장하거나 설정 확인 명령을
+실행해도 자료가 전송되지 않습니다.
 
 ## 승인 후 프로그램에서 사용하는 경계
 
@@ -63,7 +65,10 @@ workflow = QuizWorkflow(adapter)
 Developer API로 고정하고 Vertex/Cloud credentials 자동 선택은 하지 않습니다. 최종 SDK 요청의
 HTTPS 호스트·443 포트·모델 경로·크기를 전송 전에 검사합니다. Gemini SDK 재시도는 끄며 추가
 physical request도 guard에서 거절합니다. 호출 예산은 어댑터 인스턴스에서 원자적으로 예약하고 실패도
-차감합니다. 영속 비용 원장/달러 상한/다중 프로세스 예산은 아직 없습니다.
+차감합니다. 단일 실행 CLI는 같은 프로젝트의 실행 ID를 키 조회 전에 영속 예약해 중복 실행을
+차단하고 확인된 가격과 보수적인 전체 모델 토큰 한도로 조건부 비용을 검사합니다. 강제 계정 달러
+상한이나 여러 프로젝트 복사본을 묶는 분산 비용 원장은 없습니다. 어댑터 직접 사용에는 이 단일
+승인·영속 예약 경계가 자동으로 적용되지 않습니다.
 
 기존 `OpenAIQuizAdapter` 직접 사용과 `PDF_NOTION_OPENAI_MODEL` 환경변수는 유지됩니다.
 `GeminiQuizAdapter` 직접 사용은 `PDF_NOTION_GEMINI_MODEL`을 지원합니다. 사용자 기본 경로는
