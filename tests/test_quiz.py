@@ -269,3 +269,21 @@ def test_final_transport_guard_blocks_before_network(quiz_inputs,violation):
     adapter = OpenAIQuizAdapter(client_factory=ProbeClient,key_provider=lambda:"fabricated-key")
     result = run(adapter,quiz_inputs,policy)
     assert result.errors == ["generation_blocked"] and result.attempts == 1
+
+
+def test_shared_adapter_call_budget_is_atomic(quiz_inputs):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    barrier = Barrier(2)
+    def key():
+        barrier.wait(timeout=5)
+        return "fabricated-concurrency-key"
+    class Client:
+        def __init__(self,**kwargs): pass
+        def with_structured_output(self,*args,**kwargs): return RunnableLambda(lambda messages:quiz_inputs[3])
+    adapter = OpenAIQuizAdapter(client_factory=Client,key_provider=key)
+    policy = live_policy();policy.max_calls = 1;policy.max_attempts = 1
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _:run(adapter,quiz_inputs,policy),range(2)))
+    assert sorted(r.status for r in results) == ["failed_human_review","ready_for_review"]
+    assert adapter._calls == 1

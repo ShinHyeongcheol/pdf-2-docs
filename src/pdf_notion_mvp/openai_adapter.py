@@ -1,6 +1,7 @@
 """Deferred OpenAI client construction; default calls cannot read a key or connect."""
 import json
 import os
+from threading import Lock
 from collections.abc import Callable
 
 import httpx
@@ -35,6 +36,7 @@ class OpenAIQuizAdapter:
         self._client_factory = client_factory
         self._key_provider = key_provider
         self._calls = 0
+        self._budget_lock = Lock()
 
     def generate(self, context: LessonContext, policy: QuizPolicy, feedback: list[str]) -> QuizBatch:
         policy = QuizPolicy.model_validate(policy.model_dump())
@@ -60,7 +62,11 @@ class OpenAIQuizAdapter:
         if factory is None:
             from langchain_openai import ChatOpenAI
             factory = ChatOpenAI
-        self._calls += 1  # Reserve before the request; errors do not refund budget.
+        # Reserve atomically even if multiple local workflows share the adapter.
+        with self._budget_lock:
+            if self._calls >= policy.max_calls:
+                raise GenerationBlocked("call budget exhausted")
+            self._calls += 1  # Errors do not refund the reservation.
         def guard_request(request: httpx.Request):
             # Inspect finalized SDK serialization BEFORE transport sends anything.
             if request.url.scheme != "https" or request.url.host != "api.openai.com" or request.url.path != "/v1/chat/completions":
