@@ -153,7 +153,9 @@ state without replay. Confirmation also checks preexisting page content is prese
 confirms actions but has no credentials or live transport. Host async completion must be resolved before
 confirmation. This does not implement distributed concurrency or native Notion pagination.
 
-Actual connected-tool reads and creation of a small authored synthetic page succeeded. The subsequent
-append was rejected by host approval review, so no claim of successful live toggle append/roundtrip is made.
-Cursor chain completeness, source/notes preservation and ambiguous-success recovery are mock-tested;
-missing native pagination capabilities remain explicit. See NOTION_MCP.md.
+Actual connected-tool creation, append and read-back of a small authored synthetic page succeeded.
+One question's native payload matched the remote question/answer/explanation/provenance after Markdown
+normalization, and the preexisting source/synthetic-note prefix was preserved. Confirmation cleared the
+pending checkpoint; a rerun returned unchanged with no second append action. Actual source or user edits,
+concurrent writers and native pagination are not verified by this sample. Cursor chain completeness and
+ambiguous-success recovery remain mock-tested. See NOTION_MCP.md.
