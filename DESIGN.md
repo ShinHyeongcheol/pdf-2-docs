@@ -79,6 +79,22 @@ explicit review assertion, not a semantic-verification result. Original blocks a
 is local and needs human review. This path does not extend the generic HTTP API or implement an automated Notion writer.
 
 
+## Configurable providers
+
+ProviderSettings selects Gemini by default or OpenAI explicitly. It has no model default and requires
+an explicit user-approved model allowlist in addition to QuizPolicy capability approval. Provider choice,
+model ID syntax and allowlist are checked before key loading. Keys use a selected-name loader, optionally
+from an explicitly supplied project-root .env only after the delegate's network/byte/output/call gates.
+There are no custom endpoint settings or automatic cross-provider retries. Provider-specific SDK adapters
+share the existing QuizGenerator/result/verifier contracts, so further providers require new explicit
+adapters and registry selection, not endpoint substitution. Tracing is disabled in the quiz graph context.
+
+Gemini uses the current Google GenAI SDK through LangChain with native JSON schema, explicit Developer
+API backend, zero SDK retries, milliseconds timeout, fixed endpoint and finalized request byte guard.
+One invocation permits one physical request. Tests inject fabricated keys and HTTP MockTransport only;
+no account, actual model capability, price or live response was verified. See PROVIDERS.md for exact
+configuration semantics, remaining budgets and official documentation.
+
 ## Grounded quiz generation (OpenAI optional)
 
 A separate LangGraph executes generation and independent extractive validation with at most three attempts. No existing

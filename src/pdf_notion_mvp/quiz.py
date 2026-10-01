@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langsmith import tracing_context
 from pydantic import Field
 
 from .contracts import Contract, FixtureInput
@@ -66,7 +67,7 @@ class QuizResult(Contract):
     events: list[str]
     human_review_required: Literal[True] = True
     semantic_correctness_verified: Literal[False] = False
-    provider_mode: Literal["mock", "openai"]
+    provider_mode: Literal["mock", "openai", "gemini"]
 
 
 class GenerationBlocked(RuntimeError):
@@ -74,7 +75,7 @@ class GenerationBlocked(RuntimeError):
 
 
 class QuizGenerator(Protocol):
-    mode: Literal["mock", "openai"]
+    mode: Literal["mock", "openai", "gemini"]
     def generate(self, context: LessonContext, policy: QuizPolicy, feedback: list[str]) -> object: ...
 
 
@@ -191,7 +192,8 @@ class QuizWorkflow:
         policy = QuizPolicy.model_validate((policy or QuizPolicy()).model_dump())
         context = prepare_context(source, hierarchy, layer, section_id, asset_root)
         initial = dict(context=context, policy=policy, attempts=0, batch=None, errors=[], events=[], terminal=False)
-        state = self.graph.invoke(initial, config={"recursion_limit":12})
+        with tracing_context(enabled=False):
+            state = self.graph.invoke(initial, config={"recursion_limit":12})
         result = QuizResult(status="failed_human_review" if state["errors"] else "ready_for_review",
             attempts=state["attempts"], document_id=context.document_id, version=context.version,
             section_id=section_id, source_digest=context.source_digest,
