@@ -24,6 +24,10 @@ def section_marker(binding: SectionPage) -> str:
 
 
 def encode_text(text: str) -> str:
+    # Only LF has a verified literal representation in this connector subset.
+    # Reject other splitlines separators rather than normalize or lose source data.
+    if any(c in text for c in "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"):
+        raise ValueError("unsupported rich-text line separator")
     return "".join("\\"+c if c in ESCAPE else c for c in text).replace("\n", "<br>")
 
 
@@ -194,6 +198,11 @@ def _checkpoint_matches(checkpoint: Checkpoint, existing: dict[str, dict]) -> bo
         zip(checkpoint.pending_keys, checkpoint.expected_blocks))
 
 
+def _require_preserved_body(body: str, checkpoint: Checkpoint) -> None:
+    if not checkpoint.before_body or not body.startswith(checkpoint.before_body):
+        raise ValueError("preexisting page content changed; human review required")
+
+
 def prepare_publication(source: FixtureInput, hierarchy: HierarchicalOutline, layer: ReviewLayer,
                         result: QuizResult, binding: SectionPage, packet: dict,
                         checkpoint: Checkpoint | None = None, asset_root: Path | None = None) -> PreparedPublication:
@@ -204,6 +213,7 @@ def prepare_publication(source: FixtureInput, hierarchy: HierarchicalOutline, la
         body = fetch_body(packet, plan.binding)
         existing = parse_owned(body)
         if checkpoint.pending_keys:
+            _require_preserved_body(body, checkpoint)
             if not _checkpoint_matches(checkpoint, existing):
                 raise ValueError("unconfirmed prior write; do not blindly retry")
             checkpoint = Checkpoint(page_id=binding.page_id)
@@ -215,6 +225,8 @@ def prepare_publication(source: FixtureInput, hierarchy: HierarchicalOutline, la
             return PreparedPublication(status="unchanged", checkpoint=checkpoint)
         content = "\n".join(render_block(o.block) for o in missing)
         if len(content.encode()) > 150_000: raise ValueError("connector action exceeds limit")
+        if parse_owned(content) != {o.operation_key: o.block for o in missing}:
+            raise ValueError("rendered content does not match expected blocks")
         checkpoint = Checkpoint(page_id=binding.page_id, pending_keys=[o.operation_key for o in missing],
             expected_blocks=[o.block for o in missing], before_body=body)
         return PreparedPublication(status="append_required", checkpoint=checkpoint,
@@ -229,8 +241,7 @@ def confirm_publication(packet: dict, binding: SectionPage, checkpoint: Checkpoi
     checkpoint = Checkpoint.model_validate(checkpoint.model_dump())
     if checkpoint.page_id != binding.page_id: raise ValueError("wrong checkpoint page")
     body = fetch_body(packet, binding)
-    if not checkpoint.before_body or not body.startswith(checkpoint.before_body):
-        raise ValueError("preexisting page content changed; human review required")
+    _require_preserved_body(body, checkpoint)
     if not checkpoint.pending_keys or not _checkpoint_matches(checkpoint, parse_owned(body)):
         raise ValueError("write not confirmed")
     return Checkpoint(page_id=binding.page_id)

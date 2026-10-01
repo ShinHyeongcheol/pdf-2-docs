@@ -163,3 +163,88 @@ def test_cli_refuses_aliasing_inputs_or_checkpoint(inputs, tmp_path, monkeypatch
     monkeypatch.setattr(sys,"argv",["notion-mcp","--binding",str(input_file),"--fetch-result",str(input_file),"--output",str(alias)])
     with pytest.raises(SystemExit) as exc: main()
     assert exc.value.code == 2 and input_file.read_text() == "must remain unchanged"
+
+
+@pytest.mark.parametrize("change", ["deleted", "modified"])
+def test_pending_resume_keeps_checkpoint_when_existing_note_changes(inputs, tmp_path, change):
+    binding = inputs[-1]
+    original = before(binding)
+    first = prepare_publication(*inputs, packet(binding, original))
+    saved = tmp_path / "checkpoint.json"
+    save_checkpoint(saved, first.checkpoint)
+    restarted = Checkpoint.model_validate_json(saved.read_text())
+    changed = original.split("\n", 1)[1] if change == "deleted" else original.replace("사용자 메모", "수정된 메모")
+    remote = packet(binding, changed+"\n"+first.action.arguments["content"])
+    # Owned blocks match, but success also requires preserving the prior page body.
+    assert parse_owned(fetch_body(remote, binding)) == dict(zip(restarted.pending_keys, restarted.expected_blocks))
+    with pytest.raises(ValueError, match="preexisting page content changed"):
+        confirm_publication(remote, binding, restarted)
+    resumed = prepare_publication(*inputs, remote, restarted)
+    assert resumed.status == "failed_human_review" and resumed.action is None
+    assert resumed.checkpoint == restarted
+    save_checkpoint(saved, resumed.checkpoint)
+    assert Checkpoint.model_validate_json(saved.read_text()) == restarted
+
+
+@pytest.mark.parametrize("change", ["deleted", "modified"])
+def test_cli_resume_preserves_pending_evidence_after_note_change(inputs, tmp_path, monkeypatch, change):
+    import sys
+    from pdf_notion_mvp.notion_mcp_cli import main
+    binding = tmp_path / "binding.json"
+    fetched = tmp_path / "fetch.json"
+    saved = tmp_path / "checkpoint.json"
+    output = tmp_path / "action.json"
+    original = before(inputs[-1])
+    binding.write_text(inputs[-1].model_dump_json())
+    fetched.write_text(json.dumps(packet(inputs[-1], original)))
+    argv = ["notion-mcp", "--binding", str(binding), "--fetch-result", str(fetched),
+            "--checkpoint", str(saved), "--output", str(output)]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as exc: main()
+    assert exc.value.code == 0
+    first = json.loads(output.read_text())
+    pending = Checkpoint.model_validate_json(saved.read_text())
+    changed = original.split("\n", 1)[1] if change == "deleted" else original.replace("사용자 메모", "수정된 메모")
+    fetched.write_text(json.dumps(packet(inputs[-1], changed+"\n"+first["action"]["arguments"]["content"])))
+    with pytest.raises(SystemExit) as exc: main()
+    assert exc.value.code == 1
+    resumed = json.loads(output.read_text())
+    assert resumed["status"] == "failed_human_review" and resumed["action"] is None
+    assert Checkpoint.model_validate_json(saved.read_text()) == pending
+    assert resumed["checkpoint"] == pending.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r", "\u2028", "\u2029", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85"])
+def test_workflow_newlines_roundtrip_or_block_before_action(inputs, newline):
+    from pdf_notion_mvp.quiz import cloze_question
+    from pdf_notion_mvp.review import document_digest
+    source, hierarchy, layer, _, binding = inputs
+    block = next(b for b in source.document.blocks if b.block_id == "b7")
+    block.text = block.text.replace("마지막 ", "마지막"+newline)
+    layer.source_digest = document_digest(source.document)
+    batch = QuizBatch.model_validate_json((Path(__file__).parents[1]/"fixtures/synthetic-quiz.json").read_text())
+    question = batch.questions[0]
+    question.source_quote = block.text
+    question.question = cloze_question(block.text, question.answer)
+    question.explanation = "근거 원문: "+block.text
+    result = QuizWorkflow(ScriptedQuizAdapter([batch])).run(source, hierarchy, layer, binding.section_id)
+    assert result.status == "ready_for_review"
+    original_source, original_result = source.model_dump(), result.model_dump()
+    prepared = prepare_publication(source, hierarchy, layer, result, binding, packet(binding, before(binding)))
+    if newline == "\n":
+        assert prepared.status == "append_required"
+        body = before(binding)+"\n"+prepared.action.arguments["content"]
+        assert confirm_publication(packet(binding, body), binding, prepared.checkpoint).pending_keys == []
+        assert list(parse_owned(body).values()) == prepared.checkpoint.expected_blocks
+    else:
+        assert prepared.status == "failed_human_review" and prepared.action is None
+        assert prepared.checkpoint.pending_keys == [] and prepared.checkpoint.expected_blocks == []
+    assert source.model_dump() == original_source and result.model_dump() == original_result
+
+
+def test_render_mismatch_cannot_issue_action_or_pending_checkpoint(inputs, monkeypatch):
+    from pdf_notion_mvp import notion_mcp
+    monkeypatch.setattr(notion_mcp, "render_block", lambda block: "silently lost quiz content")
+    prepared = prepare_publication(*inputs, packet(inputs[-1], before(inputs[-1])))
+    assert prepared.status == "failed_human_review" and prepared.action is None
+    assert prepared.checkpoint.pending_keys == [] and prepared.checkpoint.expected_blocks == []
