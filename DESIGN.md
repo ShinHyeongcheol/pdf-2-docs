@@ -104,3 +104,21 @@ Official capability references checked on 2026-10-01 (documentation checks only;
 The available session had no callable OpenAI docs MCP or platform-api-key guide. Official web docs were used. The user's explicit
 instruction to provide a key later kept credential setup and live requests out of this work. No pricing table or model default is
 embedded. Capabilities and account access must be confirmed again for the chosen model before any live call.
+
+## Mock-only question toggles
+
+`notion_quiz` re-derives evidence from explicit source inputs, checks saved result provenance and repeats
+the independent cloze verifier. It creates bounded native toggle objects with mock disclosure, answers,
+extractive explanations and source/version/page/bbox plus separate raw/effective evidence. Provider IDs
+do not define operation identity. Content/source hashes do; changing evidence creates a new revision.
+
+The replaceable page gateway exposes only complete snapshots and appends; no update/delete operation.
+A visible ownership marker inside the explanation makes sequential retries discoverable without a local
+receipt. Conflicting edits or duplicate markers stop publication. Ambiguous append failure stops until
+a new run reads the remote page. This does not claim atomic Notion transactions, concurrency control or
+exactly-once real writes. Only the in-memory fake is implemented; future gateways must verify hub/page
+ancestry, hydrate nested blocks, exhaust pagination and normalize read metadata to the request shape.
+
+Native payload shape follows [Notion block reference](https://developers.notion.com/reference/block).
+Complete snapshots follow [retrieve children pagination](https://developers.notion.com/reference/get-block-children).
+Neither external Notion writes nor remote API acceptance were tested.
