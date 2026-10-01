@@ -87,3 +87,58 @@ def test_ocr_cannot_spoof_synthetic_metadata(tmp_path):
     source=candidate(tmp_path)
     source.document.extraction.engine="synthetic"
     with pytest.raises(ValidationError): FixtureInput.model_validate(source.model_dump())
+
+
+def test_ocr_cannot_downgrade_to_synthetic_mode(tmp_path):
+    from pydantic import ValidationError
+    from pdf_notion_mvp.contracts import ExtractionInfo, FixtureInput
+    source=candidate(tmp_path,page_count=2)
+    source.kind="synthetic_ir"
+    source.document.extraction=ExtractionInfo()
+    # Existing OCR/raster provenance is forbidden even if extraction metadata was reset.
+    with pytest.raises(ValidationError): FixtureInput.model_validate(source.model_dump())
+
+
+def test_synthetic_mode_cannot_reference_local_asset(tmp_path):
+    from pydantic import ValidationError
+    from pdf_notion_mvp.contracts import ExtractionInfo, FixtureInput
+    source=candidate(tmp_path)
+    source.kind="synthetic_ir"
+    source.document.extraction=ExtractionInfo()
+    for block in source.document.blocks:
+        block.source.method="synthetic"
+        block.source.confidence=None
+    with pytest.raises(ValidationError): FixtureInput.model_validate(source.model_dump())
+
+
+@pytest.mark.parametrize("change",["delete","bytes","root"])
+def test_ready_rechecks_current_assets_after_validation(tmp_path,change):
+    from pathlib import Path
+    source=candidate(tmp_path)
+    store=JobStore(tmp_path / "jobs.sqlite")
+    job=store.create(source,"a",PIPELINE_VERSION)
+    workflow=default_workflow(asset_root=tmp_path)
+    for _ in range(4): job=store.advance(job.job_id,workflow)
+    assert job.status==Status.VALIDATED
+    if change=="delete": Path(source.document.blocks[-1].asset_ref).unlink()
+    elif change=="bytes": Path(source.document.blocks[-1].asset_ref).write_bytes(b"changed raster")
+    elif change=="root": workflow=default_workflow(asset_root=tmp_path/"new-root")
+    result=JobStore(store.path).advance(job.job_id,workflow)
+    assert result.status==Status.REJECTED and result.publish_plan is None
+    assert not result.validation.passed
+
+
+def test_publisher_cannot_remove_ocr_human_review(tmp_path):
+    from pdf_notion_mvp.adapters import FixtureExtractor,LocalKnowledgeAdapter,DryRunNotionPlanner
+    from pdf_notion_mvp.workflow import Workflow
+    class BadPublisher(DryRunNotionPlanner):
+        def plan(self,restored,fingerprint):
+            plan=super().plan(restored,fingerprint)
+            plan.human_review_required=False
+            return plan
+    source=candidate(tmp_path)
+    store=JobStore(tmp_path / "jobs.sqlite")
+    job=store.create(source,"a",PIPELINE_VERSION)
+    result=store.run(job.job_id,Workflow(FixtureExtractor(),LocalKnowledgeAdapter(),BadPublisher(),asset_root=tmp_path))
+    assert result.status==Status.FAILED and result.publish_plan is None
+    assert result.input.document.extraction.human_review_required

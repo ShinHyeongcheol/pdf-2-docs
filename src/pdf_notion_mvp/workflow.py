@@ -9,7 +9,7 @@ from .contracts import DocumentIR, Event, Job, Outline, PublishPlan, RestoredDoc
 from .verification import verify
 from .identity import operation_key
 
-PIPELINE_VERSION = "ir-preservation-v3"
+PIPELINE_VERSION = "ir-preservation-v5"
 
 
 ALLOWED = {
@@ -17,7 +17,7 @@ ALLOWED = {
     Status.EXTRACTED: {Status.PLANNED, Status.FAILED},
     Status.PLANNED: {Status.RESTORED, Status.FAILED},
     Status.RESTORED: {Status.VALIDATED, Status.REJECTED, Status.FAILED},
-    Status.VALIDATED: {Status.READY, Status.FAILED},
+    Status.VALIDATED: {Status.READY, Status.REJECTED, Status.FAILED},
     Status.READY: set(), Status.REJECTED: set(), Status.FAILED: set(),
 }
 
@@ -116,8 +116,16 @@ class Workflow:
         job = state["job"]
         if job.validation is None or not job.validation.passed or job.restored is None:
             raise ValueError("publication requires independent verification")
+        assert job.outline is not None
+        # Files/root may have changed since the persisted validation checkpoint.
+        current_validation = verify(job.input.document, job.outline, job.restored, self.asset_root)
+        if not current_validation.passed:
+            job.validation = current_validation
+            return {"job": transition(job, Status.REJECTED)}
         plan = self.publisher.plan(job.restored.model_copy(deep=True), job.fingerprint)
         job.publish_plan = PublishPlan.model_validate(plan.model_dump())
+        if not job.publish_plan.human_review_required:
+            raise ValueError("publisher cannot remove the human review requirement")
         expected = [(s.section_id, s.title, b.model_dump()) for s in job.restored.sections for b in s.blocks]
         actual = [(o.section_id, o.section_title, o.block.model_dump()) for o in job.publish_plan.operations]
         if actual != expected or len({o.operation_key for o in job.publish_plan.operations}) != len(expected):

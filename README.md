@@ -59,10 +59,15 @@ CLI는 IR 파일의 부모 폴더를 신뢰할 에셋 범위로 사용합니다.
 ## 상태 API 확인
 
 ```bash
-.venv/bin/python -m uvicorn pdf_notion_mvp.api:create_app --factory --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn pdf_notion_mvp.api:create_demo_app --factory --host 127.0.0.1 --port 8000
 ```
 
 `http://127.0.0.1:8000/docs`에서 아래 순서로 확인할 수 있습니다.
+
+위 명령은 서버가 명시적으로 켜는 **합성 데모**입니다. 일반 `create_app`은 합성 입력의 생성·
+실행·재개·게시 계획 조회를 거절하며, 요청 본문으로 데모 모드를 활성화할 수 없습니다.
+일반 앱의 OCR 검증은 서버에서 지정한 신뢰 에셋 폴더를 사용합니다. 합성 모드는 합성 출처와
+`synthetic://` 이미지 참조만 허용하며 OCR/래스터 출처와 혼합할 수 없습니다.
 
 1. `POST /jobs`: `{"request_key":"local-demo","input": <fixtures/synthetic.json의 전체 객체>}`.
 2. `GET /jobs/{job_id}`: 현재 상태·revision·artifact·history 확인.

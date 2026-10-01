@@ -127,8 +127,13 @@ class FixtureInput(Contract):
                 raise ValueError("OCR input blocks require OCR/raster provenance")
             if any(b.source.method == "ocr" and b.source.confidence is None for b in self.document.blocks):
                 raise ValueError("OCR text requires source confidence")
-        elif extraction.engine != "synthetic":
-            raise ValueError("synthetic input cannot claim a real extraction engine")
+        else:
+            if extraction.model_dump() != ExtractionInfo().model_dump():
+                raise ValueError("synthetic input cannot claim real extraction metadata")
+            if any(b.source.method != "synthetic" or b.source.confidence is not None for b in self.document.blocks):
+                raise ValueError("synthetic input permits only synthetic provenance")
+            if any(isinstance(b, ImageBlock) and not b.asset_ref.startswith("synthetic://") for b in self.document.blocks):
+                raise ValueError("synthetic images require synthetic references")
         return self
 
 
