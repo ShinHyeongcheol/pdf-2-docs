@@ -49,7 +49,7 @@ def test_provider_switch_same_verifier_no_fallback(inputs, provider, model):
     assert result.status == "ready_for_review" and result.provider_mode == provider
     assert calls[0]["model"] == model and calls[0]["max_retries"] == 0
     if provider == "gemini":
-        assert calls[0]["vertexai"] is False and calls[0]["timeout"] == 20_000
+        assert calls[0]["vertexai"] is False and calls[0]["timeout"] == 20
         assert calls[0]["client_args"]["trust_env"] is False
     else: assert calls[0]["base_url"] == "https://api.openai.com/v1"
 
@@ -247,3 +247,23 @@ def test_quiz_disables_inherited_tracing(inputs, monkeypatch):
         def with_structured_output(self, *args, **kwargs): return RunnableLambda(lambda _:inputs[3])
     result = run(build_provider(settings(), client_factory=Client, key_provider=lambda:"fabricated-key"), inputs, policy())
     assert result.status == "ready_for_review" and observations == [False]
+
+
+@pytest.mark.parametrize("seconds", [0.5, 20, 60])
+def test_gemini_final_http_timeout_matches_seconds_policy(inputs, monkeypatch, seconds):
+    import os
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    monkeypatch.setattr(os, "environ", {})
+    seen = []
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(200, json={"candidates":[{"content":{"role":"model","parts":[{"text":inputs[3].model_dump_json()}]},"finishReason":"STOP"}]})
+    def factory(**kwargs):
+        args = dict(kwargs["client_args"])
+        args["transport"] = httpx.MockTransport(respond)
+        kwargs["client_args"] = args
+        return ChatGoogleGenerativeAI(**kwargs)
+    result = run(build_provider(settings(), client_factory=factory, key_provider=lambda:"fabricated-key"),
+        inputs, policy(timeout_seconds=seconds))
+    assert result.status == "ready_for_review" and len(seen) == 1
+    assert seen[0].extensions["timeout"] == {name:seconds for name in ("connect", "read", "write", "pool")}

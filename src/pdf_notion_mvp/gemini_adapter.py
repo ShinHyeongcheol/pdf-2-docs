@@ -62,7 +62,7 @@ class GeminiQuizAdapter:
 
         client = factory(model=policy.model, api_key=key, vertexai=False,
             base_url="https://generativelanguage.googleapis.com", api_version="v1beta",
-            timeout=max(1, int(policy.timeout_seconds * 1000)), max_retries=0,
+            timeout=policy.timeout_seconds, max_retries=0,
             max_output_tokens=policy.max_output_tokens,
             client_args={"trust_env": False, "event_hooks": {"request": [guard_request]}})
         try:

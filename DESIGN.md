@@ -91,7 +91,7 @@ share the existing QuizGenerator/result/verifier contracts, so further providers
 adapters and registry selection, not endpoint substitution. Tracing is disabled in the quiz graph context.
 
 Gemini uses the current Google GenAI SDK through LangChain with native JSON schema, explicit Developer
-API backend, zero SDK retries, milliseconds timeout, fixed endpoint and finalized request byte guard.
+API backend, zero SDK retries, seconds passed to LangChain (which converts to SDK milliseconds), fixed endpoint and finalized request byte guard.
 One invocation permits one physical request. Tests inject fabricated keys and HTTP MockTransport only;
 no account, actual model capability, price or live response was verified. See PROVIDERS.md for exact
 configuration semantics, remaining budgets and official documentation.
