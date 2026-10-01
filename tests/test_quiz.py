@@ -206,7 +206,8 @@ def test_ocr_unreviewed_and_candidate_text_excluded(source,tmp_path):
     with pytest.raises(ValueError,match="no confirmed"): prepare_context(ocr,hierarchy,layer,"whole",tmp_path)
 
 
-def test_real_sdk_serialization_with_mock_http_only(quiz_inputs,monkeypatch):
+@pytest.mark.parametrize("port", [None,443,444])
+def test_real_sdk_serialization_with_mock_http_only(quiz_inputs,monkeypatch,port):
     import os
     import httpx
     module = pytest.importorskip("langchain_openai")
@@ -228,10 +229,16 @@ def test_real_sdk_serialization_with_mock_http_only(quiz_inputs,monkeypatch):
         def factory(**kwargs):
             http.event_hooks = kwargs["http_client"].event_hooks
             kwargs["http_client"] = http
+            suffix = "" if port is None else f":{port}"
+            kwargs["base_url"] = f"https://api.openai.com{suffix}/v1"
             return module.ChatOpenAI(**kwargs)
         adapter = OpenAIQuizAdapter(client_factory=factory,key_provider=lambda:"fabricated-test-key")
         result = run(adapter,quiz_inputs,live_policy())
-    assert result.status == "ready_for_review" and len(requests)==1
+    if port == 444:
+        assert result.status == "failed_human_review" and result.errors == ["generation_blocked"]
+        assert not requests
+    else:
+        assert result.status == "ready_for_review" and len(requests)==1
 
 
 def test_context_preparation_failure_makes_zero_requests(quiz_inputs):

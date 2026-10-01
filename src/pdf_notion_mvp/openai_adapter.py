@@ -69,7 +69,7 @@ class OpenAIQuizAdapter:
             self._calls += 1  # Errors do not refund the reservation.
         def guard_request(request: httpx.Request):
             # Inspect finalized SDK serialization BEFORE transport sends anything.
-            if request.url.scheme != "https" or request.url.host != "api.openai.com" or request.url.path != "/v1/chat/completions":
+            if request.url.scheme != "https" or request.url.host != "api.openai.com" or request.url.port not in (None, 443) or request.url.path != "/v1/chat/completions":
                 raise GenerationBlocked("only the explicit OpenAI chat completion endpoint is allowed")
             if len(request.content) > policy.max_request_bytes:
                 raise GenerationBlocked("serialized request byte limit exceeded")
