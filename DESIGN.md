@@ -66,3 +66,14 @@ API는 기본 localhost에서 실행하며 인증/다중 사용자 접근은 제
 동기식 명시적 요청이다. 원본 입력과 참조 문서는 프로젝트 밖에 보관한다. 비공개 참조 자료,
 원본 PDF, 외부 설계서, 비밀·자격증명은 코드/fixture/문서/이슈/PR에 넣지 않는다.
 후속 범위는 의미적 PDF 구조 복원, 사용자 승인된 모델·Notion 통합, 그래프 해설 토글·문제·RAG다.
+
+
+## Explicit hierarchy and review overlay
+
+The optional hierarchy adapter validates parent/leaf ownership, preorder, full source coverage and input IR order before
+flattening leaves into the existing restoration contract. Parent nodes never repeat block IDs. Front matter can be its own leaf.
+The separate review command retains the complete original DocumentIR and produces effective text plus reviewed/candidate
+layout fragments. Every correction binds to the original text, provenance and document digest, with a same-page image region.
+Candidate corrections do not modify effective text; confirmed fragments cannot cite candidate corrections. Fragment text is an
+explicit review assertion, not a semantic-verification result. Original blocks are neither replaced nor executed. Review output
+is local and needs human review. This path does not extend the generic HTTP API or implement an automated Notion writer.

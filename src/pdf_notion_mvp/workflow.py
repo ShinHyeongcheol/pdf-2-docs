@@ -47,6 +47,12 @@ class Workflow:
     """Each graph invocation executes precisely one persisted stage."""
 
     def __init__(self, extractor: Extractor, knowledge: KnowledgeAdapter, publisher: PublishPlanner, pipeline_version: str = PIPELINE_VERSION, asset_root: Path | None = None):
+        configuration_digest = getattr(knowledge, "configuration_digest", None)
+        if configuration_digest is not None:
+            import re
+            if not isinstance(configuration_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", configuration_digest):
+                raise ValueError("adapter configuration digest must be SHA-256")
+            pipeline_version = f"{pipeline_version}:hierarchy:{configuration_digest}"
         self.pipeline_version = pipeline_version
         self.asset_root = asset_root
         self.extractor = extractor
