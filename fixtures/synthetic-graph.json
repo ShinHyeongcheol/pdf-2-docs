@@ -1,0 +1,201 @@
+{
+  "source": {
+    "kind": "synthetic_ir",
+    "document": {
+      "schema_version": "1",
+      "document_id": "synthetic-graph-training",
+      "version": "authored-v1",
+      "name": "직접 작성한 합성 그래프 문서",
+      "pages": [
+        {
+          "number": 1,
+          "width": 600.0,
+          "height": 800.0
+        }
+      ],
+      "blocks": [
+        {
+          "block_id": "graph-heading",
+          "source": {
+            "document_id": "synthetic-graph-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 40.0,
+              "x1": 560.0,
+              "y1": 80.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "1. 합성 막대 그래프",
+          "role": "heading"
+        },
+        {
+          "block_id": "graph-image",
+          "source": {
+            "document_id": "synthetic-graph-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 100.0,
+              "x1": 560.0,
+              "y1": 400.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "image",
+          "asset_ref": "synthetic://authored-bar-chart",
+          "sha256": "fd516670a2ae8d3b96d6219b6f8fe42b979d3c2a11a25038bfd9fb7a4c043371",
+          "caption": "A=10, B=20, C=15: 작성한 합성 막대 그래프"
+        }
+      ],
+      "extraction": {
+        "engine": "synthetic",
+        "pages_processed": [],
+        "human_review_required": false,
+        "warnings": []
+      }
+    }
+  },
+  "hierarchy": {
+    "document_id": "synthetic-graph-training",
+    "version": "authored-v1",
+    "nodes": [
+      {
+        "node_id": "graphs",
+        "title": "합성 그래프 장",
+        "source_pages": [
+          1
+        ]
+      },
+      {
+        "node_id": "graphs.bars",
+        "parent_id": "graphs",
+        "title": "합성 막대 그래프 절",
+        "source_pages": [
+          1
+        ],
+        "block_ids": [
+          "graph-heading",
+          "graph-image"
+        ]
+      }
+    ]
+  },
+  "review": {
+    "document_id": "synthetic-graph-training",
+    "version": "authored-v1",
+    "source_digest": "5007a53163ac8a2baf771f706a267e266c3c096d065dad252fe6df1f647ea003"
+  },
+  "evidence": {
+    "document_id": "synthetic-graph-training",
+    "version": "authored-v1",
+    "source_digest": "5007a53163ac8a2baf771f706a267e266c3c096d065dad252fe6df1f647ea003",
+    "section_id": "graphs.bars",
+    "image_block_id": "graph-image",
+    "image_sha256": "fd516670a2ae8d3b96d6219b6f8fe42b979d3c2a11a25038bfd9fb7a4c043371",
+    "observations": [
+      {
+        "observation_id": "values",
+        "kind": "value",
+        "status": "confirmed",
+        "basis": "authored_synthetic",
+        "text": "작성한 합성 값: A=10, B=20, C=15",
+        "bbox": {
+          "x0": 140,
+          "y0": 150,
+          "x1": 485,
+          "y1": 255
+        }
+      },
+      {
+        "observation_id": "labels",
+        "kind": "label",
+        "status": "confirmed",
+        "basis": "authored_synthetic",
+        "text": "합성 범주: A, B, C",
+        "bbox": {
+          "x0": 140,
+          "y0": 345,
+          "x1": 485,
+          "y1": 370
+        }
+      },
+      {
+        "observation_id": "comparison",
+        "kind": "trend",
+        "status": "confirmed",
+        "basis": "authored_synthetic",
+        "text": "합성 비교: B(20) > C(15) > A(10)",
+        "bbox": {
+          "x0": 140,
+          "y0": 150,
+          "x1": 485,
+          "y1": 340
+        }
+      },
+      {
+        "observation_id": "unit-candidate",
+        "kind": "label",
+        "status": "extracted_candidate",
+        "basis": "mock_extractor",
+        "text": "단위가 count일 가능성: 확인 전 사용 금지",
+        "bbox": {
+          "x0": 450,
+          "y0": 130,
+          "x1": 550,
+          "y1": 155
+        }
+      },
+      {
+        "observation_id": "unknown-tick",
+        "kind": "value",
+        "status": "unreadable",
+        "basis": "mock_extractor",
+        "text": null,
+        "bbox": {
+          "x0": 60,
+          "y0": 160,
+          "x1": 90,
+          "y1": 190
+        }
+      }
+    ]
+  },
+  "mock_draft": {
+    "image_block_id": "graph-image",
+    "confirmed_observation_ids": [
+      "values",
+      "labels",
+      "comparison"
+    ],
+    "extracted_observation_ids": [
+      "unit-candidate"
+    ],
+    "inference_candidates": [
+      {
+        "kind": "measurement_context_needed",
+        "basis_observation_ids": [
+          "values"
+        ]
+      }
+    ],
+    "review_reasons": [
+      "semantic_unverified",
+      "unreadable_values",
+      "extracted_candidates"
+    ]
+  },
+  "binding": {
+    "hub_id": "00000000-0000-4000-8000-000000000001",
+    "page_id": "00000000-0000-4000-8000-000000000003",
+    "document_id": "synthetic-graph-training",
+    "version": "authored-v1",
+    "section_id": "graphs.bars"
+  }
+}

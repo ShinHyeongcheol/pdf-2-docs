@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="300" viewBox="0 0 520 300">
+  <title>Authored synthetic bar chart for offline tests</title>
+  <desc>Values are A 10, B 20, C 15. Unit and one tick are intentionally unknown. No real document data.</desc>
+  <rect width="520" height="300" fill="#ffffff"/>
+  <text x="20" y="24" font-family="sans-serif" font-size="16">Authored fixture: A=10, B=20, C=15</text>
+  <text x="420" y="48" font-family="sans-serif" font-size="12">unit ?</text>
+  <line x1="60" y1="50" x2="60" y2="240" stroke="#333333"/>
+  <line x1="60" y1="240" x2="490" y2="240" stroke="#333333"/>
+  <text x="25" y="80" font-family="sans-serif" font-size="12">?</text>
+  <rect x="100" y="160" width="60" height="80" fill="#4477bb"/>
+  <rect x="240" y="80" width="60" height="160" fill="#4477bb"/>
+  <rect x="380" y="120" width="60" height="120" fill="#4477bb"/>
+  <text x="118" y="150" font-family="sans-serif" font-size="16">10</text>
+  <text x="258" y="70" font-family="sans-serif" font-size="16">20</text>
+  <text x="398" y="110" font-family="sans-serif" font-size="16">15</text>
+  <text x="123" y="263" font-family="sans-serif" font-size="16">A</text>
+  <text x="263" y="263" font-family="sans-serif" font-size="16">B</text>
+  <text x="403" y="263" font-family="sans-serif" font-size="16">C</text>
+</svg>
