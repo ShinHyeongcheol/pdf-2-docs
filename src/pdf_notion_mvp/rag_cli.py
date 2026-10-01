@@ -1,4 +1,4 @@
-"""Authored local RAG demo/evaluation; no SDK, keys or external transport."""
+"""Explicit local review inputs or authored demo; no SDK, keys or transport."""
 import argparse
 import json
 import os
@@ -12,8 +12,9 @@ from .contracts import Contract, FixtureInput
 from .live_run import artifact_path
 from .notion_quiz import SectionPage
 from .quiz import GenerationBlocked
-from .rag import MockAnswerAdapter, RagWorkflow, extractive_draft, prepare_index
+from .rag import IndexLimitExceeded, MockAnswerAdapter, RagWorkflow, extractive_draft, prepare_index
 from .review import HierarchicalOutline, ReviewLayer, document_digest
+from .rag_files import load_review_files
 
 
 class RagFixture(Contract):
@@ -105,17 +106,30 @@ def _save_json(path,value):
 
 
 def main(argv=None, *, project_root=None):
-    parser=argparse.ArgumentParser(description="Ask an authored synthetic local lexical RAG fixture; no network")
-    parser.add_argument("--question",default="재개 체크포인트")
+    parser=argparse.ArgumentParser(description="Ask local confirmed review text or an authored RAG demo; no network")
+    parser.add_argument("--question")
+    parser.add_argument("--source",type=Path)
+    parser.add_argument("--outline",type=Path)
+    parser.add_argument("--review",type=Path)
+    parser.add_argument("--binding",type=Path,action="append",default=[])
+    parser.add_argument("--section",action="append",default=[])
     parser.add_argument("--eval",action="store_true")
     parser.add_argument("--output",type=Path,default=Path("output/mock-rag.json"))
     args=parser.parse_args(argv)
     root=Path(project_root) if project_root else Path(__file__).resolve().parents[2]
     try:
         output=artifact_path(root,args.output)
-        fixture=load_fixture(root)
+        file_mode = any(p is not None for p in (args.source,args.outline,args.review))
+        if file_mode:
+            if not all((args.source,args.outline,args.review,args.section,args.question)) or args.eval:
+                raise ValueError("file mode requires source/outline/review/section/question; eval is authored-only")
+            files=load_review_files(args.source,args.outline,args.review,args.binding,output)
+        elif args.binding or args.section:
+            raise ValueError("bindings/sections require explicit file inputs")
+        else:
+            fixture=load_fixture(root)
         data={"mode":"lexical_local_mock_answer","actual_embeddings_used":False,"vector_search_implemented":False,
-              "actual_key_reads":0,"actual_model_requests":0,"notion_requests":0}
+              "actual_key_reads":0,"actual_model_requests":0,"notion_requests":0,"input_mode":"review_files" if file_mode else "authored_demo"}
         if args.eval:
             path=root/"fixtures/synthetic-rag-eval.json"
             if path.is_symlink() or not path.is_file() or path.stat().st_size>100_000: raise ValueError("bounded authored evaluation required")
@@ -123,11 +137,22 @@ def main(argv=None, *, project_root=None):
             data.update(status="eval_passed" if evaluation["passed"] else "eval_failed",evaluation=evaluation)
         else:
             generator=MockAnswerAdapter()
-            result=run_fixture(fixture,args.question,generator)
+            if file_mode:
+                before=files.source.model_dump_json()
+                result=RagWorkflow(generator).run(files.source,files.hierarchy,files.review,args.question,
+                    files.bindings,asset_root=files.asset_root,section_ids=args.section)
+                if files.source.model_dump_json()!=before: raise ValueError("source IR mutated")
+                data.update(source_pages=len(files.source.document.pages),source_blocks=len(files.source.document.blocks),
+                    source_ir_unmodified=True,index_limit=200)
+            else:
+                result=run_fixture(fixture,args.question if args.question is not None else "재개 체크포인트",generator)
             data.update(status=result.status,result=result.model_dump(mode="json"),mock_calls=generator.calls)
         _save_json(output,data)
         print(f"mode=lexical_local_mock_answer status={data['status']} embeddings=disabled model_network=disabled")
         raise SystemExit(1 if data["status"] in {"eval_failed","failed_human_review"} else 0)
+    except IndexLimitExceeded:
+        print("rag_error:IndexLimitExceeded index_limit=200 select_fewer_sections")
+        raise SystemExit(1) from None
     except (GenerationBlocked,ValueError,TypeError,OSError) as exc:
         print("rag_error:"+type(exc).__name__)
         raise SystemExit(1) from None
