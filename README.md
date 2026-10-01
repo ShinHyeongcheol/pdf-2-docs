@@ -11,8 +11,9 @@ LangGraph가 실제 작업 노드를 실행하고, LangChain Core의 LCEL 체인
 중간 실패 후 재개, 동일 입력 중복 방지, FastAPI 상태 조회, 실제 PDF의 텍스트 레이어/OCR 필요 여부 검사,
 Mac 내장 Apple Vision OCR의 텍스트·좌표·신뢰도와 원본 페이지 래스터 보존.
 **아직 없는 것:** OCR의 의미적 정확성 검증, PDF 표·코드·그림의 자동 의미적 복원, 실제 모델 응답 품질 검증,
-앱 내부 Notion API 쓰기, 의미적 설명 생성, RAG.
-게시 계획은 Notion HTTP payload가 아닌 중립적 검토 자료입니다. `ready`는 이 dry-run 자료가 준비되었다는 뜻입니다.
+앱 내부 Notion API 쓰기, 실제 vision 해설, 임베딩/벡터 검색과 의미 정답 검증.
+별도 검토 기능은 합성 문제·그래프 토글 계획과 로컬 키워드 RAG를 제공합니다. RAG는 명시적 OCR IR·목차·확정 교정 파일의 선택 절에도 연결할 수 있으며 모델 호출이 없습니다.
+기본 게시 계획은 Notion HTTP payload가 아닌 중립적 검토 자료입니다. `ready`는 이 dry-run 자료가 준비되었다는 뜻입니다.
 
 ## 시작
 
@@ -181,3 +182,26 @@ Graph 시도는 최대 3회이고 실패도 호출 예산을 소비합니다. �
 페이지로 연결합니다. fake SDK 실행은 주입 실행으로 표시하고 검토 필요·의미 진위 미검증을 유지합니다.
 실제 API 시험은 보류 중이며 이 경로도 모델/Notion 네트워크를 사용하지 않습니다.
 [사용 안내와 신뢰 경계](PROVIDER_PUBLICATION.md)를 참고하세요.
+
+
+## 실제 검토 파일의 로컬 RAG
+
+[LOCAL_RAG.md](LOCAL_RAG.md)에 합성 데모와 실제 검토 파일 입력을 구분한 실행법이 있습니다.
+전체 IR·목차·교정 lineage와 페이지 래스터를 검증한 뒤 `--section`으로 선택한 leaf의 확정 텍스트만
+색인합니다. 원본 파일은 수정하지 않으며 200항목을 초과하면 더 작은 범위를 선택하도록 중단합니다.
+미확정/파생 후보는 답변 근거로 사용하지 않고 근거가 없으면 모름을 반환합니다.
+검색은 무료 로컬 단어 교집합이며 임베딩·외부 모델·Notion 요청은 없습니다.
+
+```sh
+.venv/bin/python -m pdf_notion_mvp.rag_cli \
+  --source /absolute/private/ocr/document-ir.json \
+  --outline /absolute/private/hierarchical-outline.json \
+  --review /absolute/private/confirmed-review.json \
+  --section '<목차 leaf ID>' --question '<질문>' \
+  --output output/private-rag-review.json
+```
+
+원문·교정·페이지 연결·결과는 공개 Git에 포함하지 마세요. OCR IR의 부모 폴더를 신뢰 에셋 범위로
+사용합니다. 실제 목차와 교정은 별도 검토 입력이며 이 명령이 자동 생성하거나 확정하지 않습니다.
+그래프는 [GRAPH_REVIEW.md](GRAPH_REVIEW.md)의 합성 SVG 모의 기능이며 실제 OCR 그래프 입력은
+아직 연결하지 않았습니다. 단일 모델 실행 CLI는 합성 승인 경로만 지원하고 실제 API 시험은 보류입니다.

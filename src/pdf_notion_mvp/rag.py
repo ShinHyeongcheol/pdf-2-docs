@@ -16,6 +16,12 @@ from .notion_quiz import SectionPage, digest
 from .review import HierarchicalOutline, ReviewLayer, apply_review
 
 UNKNOWN = "근거를 찾지 못했습니다. 모릅니다."
+MAX_INDEX_ENTRIES = 200
+
+
+class IndexLimitExceeded(ValueError):
+    """Select fewer outline leaves; never silently truncate confirmed evidence."""
+    pass
 
 
 def tokens(text: str) -> set[str]:
@@ -43,16 +49,22 @@ class RagIndex(Contract):
     source_digest: str
     review_digest: str
     index_digest: str
-    entries: list[RagEvidence] = Field(max_length=200)
+    entries: list[RagEvidence] = Field(max_length=MAX_INDEX_ENTRIES)
+    selected_section_ids: list[str] | None = None
     actual_embeddings_used: Literal[False] = False
     vector_search_implemented: Literal[False] = False
 
 
 def prepare_index(source: FixtureInput, hierarchy: HierarchicalOutline, layer: ReviewLayer,
-                  bindings: list[SectionPage] | None = None, asset_root: Path | None = None) -> RagIndex:
+                  bindings: list[SectionPage] | None = None, asset_root: Path | None = None,
+                  *, section_ids: list[str] | None = None) -> RagIndex:
     reviewed = apply_review(source, hierarchy, layer, asset_root)
     bindings = [SectionPage.model_validate(b.model_dump()) for b in (bindings or [])]
     sections = {s.section_id for s in reviewed.sections}
+    if section_ids is not None and (not section_ids or len(section_ids) != len(set(section_ids)) or
+            any(not isinstance(i, str) or i not in sections for i in section_ids)):
+        raise ValueError("selected sections must be unique known outline leaves")
+    selected = [s.section_id for s in reviewed.sections if s.section_id in section_ids] if section_ids is not None else None
     links = {}
     for binding in bindings:
         if (binding.document_id, binding.version) != (reviewed.original.document_id, reviewed.original.version) or binding.section_id not in sections or binding.section_id in links:
@@ -62,6 +74,8 @@ def prepare_index(source: FixtureInput, hierarchy: HierarchicalOutline, layer: R
     corrections = {c.block_id:c for c in reviewed.layer.corrections}
     entries = []
     for section in reviewed.sections:
+        if selected is not None and section.section_id not in selected:
+            continue
         for block in section.source_blocks:
             if block.kind != "text" or block.role != "body":
                 continue
@@ -75,9 +89,11 @@ def prepare_index(source: FixtureInput, hierarchy: HierarchicalOutline, layer: R
                 review_digest=review_digest, text=section.effective_text[block.block_id], original_text=block.text,
                 layer="confirmed_transcription" if correction else "authored_synthetic",
                 correction_id=correction.correction_id if correction else None, notion_link=links.get(section.section_id))
+            if len(entries) >= MAX_INDEX_ENTRIES:
+                raise IndexLimitExceeded("selected confirmed text exceeds 200 entries; choose fewer leaves")
             entries.append(RagEvidence(evidence_id=digest(["rag-evidence-v1",fields]), **fields))
     value = dict(document_id=reviewed.original.document_id, version=reviewed.original.version,
-        source_digest=reviewed.source_digest, review_digest=review_digest, entries=[e.model_dump(mode="json") for e in entries])
+        source_digest=reviewed.source_digest, review_digest=review_digest, entries=[e.model_dump(mode="json") for e in entries], selected_section_ids=selected)
     return RagIndex(index_digest=digest(["rag-index-v1",value]), **value)
 
 
@@ -190,6 +206,8 @@ class RagResult(Contract):
     source_digest: str
     index_digest: str
     retrieved_ids: list[str]
+    indexed_entries: int = Field(ge=0, le=MAX_INDEX_ENTRIES)
+    selected_section_ids: list[str] | None = None
     draft: RagDraft | None
     errors: list[str]
     events: list[str]
@@ -268,10 +286,10 @@ class RagWorkflow:
         errors = state["errors"] if state["draft"] is None else verify_answer(RagContext.model_validate_json(state["context_json"]),state["draft"])
         return dict(state,errors=errors,events=state["events"]+["independent_verify"])
 
-    def run(self, source, hierarchy, layer, question, bindings=None, *, index=None, asset_root=None):
+    def run(self, source, hierarchy, layer, question, bindings=None, *, index=None, asset_root=None, section_ids=None):
         if not isinstance(question,str) or not question.strip() or len(question)>1000:
             raise ValueError("bounded nonempty question required")
-        current = prepare_index(source,hierarchy,layer,bindings,asset_root)
+        current = prepare_index(source,hierarchy,layer,bindings,asset_root,section_ids=section_ids)
         if index is not None and RagIndex.model_validate(index.model_dump()) != current:
             raise ValueError("saved index is stale or mismatched; rebuild from current source")
         initial = dict(authority_json=current.model_dump_json(), question=question, context_json=None,
@@ -282,4 +300,5 @@ class RagWorkflow:
         status = "failed_human_review" if state["errors"] else "unknown" if state["draft"].kind=="unknown" else "ready_for_review"
         return RagResult(status=status,question=question,document_id=current.document_id,version=current.version,
             source_digest=current.source_digest,index_digest=current.index_digest,retrieved_ids=[e.evidence_id for e in context.retrieved] if context else [],
+            indexed_entries=len(current.entries),selected_section_ids=current.selected_section_ids,
             draft=None if state["errors"] else state["draft"],errors=state["errors"],events=state["events"],generation_skipped=state["generation_skipped"])
