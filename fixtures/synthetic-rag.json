@@ -1,0 +1,353 @@
+{
+  "source": {
+    "kind": "synthetic_ir",
+    "document": {
+      "schema_version": "1",
+      "document_id": "synthetic-rag-training",
+      "version": "authored-v1",
+      "name": "직접 작성한 합성 RAG 문서",
+      "pages": [
+        {
+          "number": 1,
+          "width": 600.0,
+          "height": 800.0
+        },
+        {
+          "number": 2,
+          "width": 600.0,
+          "height": 800.0
+        }
+      ],
+      "blocks": [
+        {
+          "block_id": "rag-heading",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 40.0,
+              "x1": 560.0,
+              "y1": 70.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "1. 근거와 재개",
+          "role": "heading"
+        },
+        {
+          "block_id": "rag-checkpoint",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 100.0,
+              "x1": 560.0,
+              "y1": 130.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "재개 기능은 마지막 체크포인트부터 다시 실행합니다.",
+          "role": "body"
+        },
+        {
+          "block_id": "rag-corrected",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 160.0,
+              "x1": 560.0,
+              "y1": 190.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "인용 검증은 원문 글자만 비교합니디.",
+          "role": "body"
+        },
+        {
+          "block_id": "rag-candidate",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 220.0,
+              "x1": 560.0,
+              "y1": 250.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "후보 대상의 원본 문장도 확인 전 사용하지 않습니다.",
+          "role": "body"
+        },
+        {
+          "block_id": "rag-visual",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 1,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 100.0,
+              "x1": 560.0,
+              "y1": 280.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "image",
+          "asset_ref": "synthetic://authored-review-reference",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "caption": "합성 교정 근거 참조; 실제 파일 없음"
+        },
+        {
+          "block_id": "rag-heading-2",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 40.0,
+              "x1": 560.0,
+              "y1": 70.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "2. 비용과 버전",
+          "role": "heading"
+        },
+        {
+          "block_id": "rag-budget",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 100.0,
+              "x1": 560.0,
+              "y1": 130.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "비용 검토는 외부 호출 전에 예산을 확인합니다.",
+          "role": "body"
+        },
+        {
+          "block_id": "rag-version",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 160.0,
+              "x1": 560.0,
+              "y1": 190.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "text",
+          "text": "문서 수정 후 색인은 새 버전의 확인된 텍스트로 다시 만듭니다.",
+          "role": "body"
+        },
+        {
+          "block_id": "rag-code",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 220.0,
+              "x1": 560.0,
+              "y1": 250.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "code",
+          "code": "synthetic_secret_code = 1",
+          "language": "python"
+        },
+        {
+          "block_id": "rag-table",
+          "source": {
+            "document_id": "synthetic-rag-training",
+            "version": "authored-v1",
+            "page": 2,
+            "bbox": {
+              "x0": 40.0,
+              "y0": 280.0,
+              "x1": 560.0,
+              "y1": 310.0
+            },
+            "method": "synthetic",
+            "confidence": null
+          },
+          "kind": "table",
+          "cells": [
+            [
+              "합성 표 전용",
+              "미색인 값"
+            ]
+          ]
+        }
+      ],
+      "extraction": {
+        "engine": "synthetic",
+        "pages_processed": [],
+        "human_review_required": false,
+        "warnings": []
+      }
+    }
+  },
+  "hierarchy": {
+    "document_id": "synthetic-rag-training",
+    "version": "authored-v1",
+    "nodes": [
+      {
+        "node_id": "rag-unit",
+        "title": "합성 RAG 장",
+        "source_pages": [
+          1,
+          2
+        ]
+      },
+      {
+        "node_id": "rag.control",
+        "parent_id": "rag-unit",
+        "title": "근거와 재개",
+        "source_pages": [
+          1
+        ],
+        "block_ids": [
+          "rag-heading",
+          "rag-checkpoint",
+          "rag-corrected",
+          "rag-candidate",
+          "rag-visual"
+        ]
+      },
+      {
+        "node_id": "rag.version",
+        "parent_id": "rag-unit",
+        "title": "비용과 버전",
+        "source_pages": [
+          2
+        ],
+        "block_ids": [
+          "rag-heading-2",
+          "rag-budget",
+          "rag-version",
+          "rag-code",
+          "rag-table"
+        ]
+      }
+    ]
+  },
+  "review": {
+    "document_id": "synthetic-rag-training",
+    "version": "authored-v1",
+    "source_digest": "601775835417de02c47c98d10c90540899550478a1c312001a2f4c67912feceb",
+    "corrections": [
+      {
+        "correction_id": "rag-fix",
+        "block_id": "rag-corrected",
+        "original_text": "인용 검증은 원문 글자만 비교합니디.",
+        "source": {
+          "document_id": "synthetic-rag-training",
+          "version": "authored-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 160,
+            "x1": 560,
+            "y1": 190
+          }
+        },
+        "proposed_text": "인용 검증은 확인된 근거와 문서 버전을 함께 대조합니다.",
+        "status": "confirmed",
+        "basis": "작성한 합성 교정 근거",
+        "reviewer": "authored-fixture-reviewer",
+        "evidence_block_id": "rag-visual",
+        "evidence_bbox": {
+          "x0": 40,
+          "y0": 160,
+          "x1": 560,
+          "y1": 190
+        }
+      },
+      {
+        "correction_id": "rag-pending",
+        "block_id": "rag-candidate",
+        "original_text": "후보 대상의 원본 문장도 확인 전 사용하지 않습니다.",
+        "source": {
+          "document_id": "synthetic-rag-training",
+          "version": "authored-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 220,
+            "x1": 560,
+            "y1": 250
+          }
+        },
+        "proposed_text": "미확정 비행 후보는 검색에 유입되면 안 됩니다.",
+        "status": "candidate",
+        "basis": "작성한 합성 교정 근거",
+        "reviewer": "authored-fixture-reviewer",
+        "evidence_block_id": "rag-visual",
+        "evidence_bbox": {
+          "x0": 40,
+          "y0": 220,
+          "x1": 560,
+          "y1": 250
+        }
+      }
+    ],
+    "fragments": [
+      {
+        "fragment_id": "rag-derived-candidate",
+        "section_id": "rag.control",
+        "source_block_ids": [
+          "rag-checkpoint"
+        ],
+        "kind": "text",
+        "text": "파생 초능력 후보는 색인 대상이 아닙니다.",
+        "status": "candidate",
+        "basis": "합성 파생 후보"
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "hub_id": "00000000-0000-4000-8000-000000000001",
+      "page_id": "00000000-0000-4000-8000-000000000004",
+      "document_id": "synthetic-rag-training",
+      "version": "authored-v1",
+      "section_id": "rag.control"
+    }
+  ]
+}
