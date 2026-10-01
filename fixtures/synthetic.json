@@ -1,0 +1,155 @@
+{
+  "kind": "synthetic_ir",
+  "document": {
+    "schema_version": "1",
+    "document_id": "synthetic-training",
+    "version": "fixture-v1",
+    "name": "직접 작성한 합성 학습 문서",
+    "pages": [
+      {
+        "number": 1,
+        "width": 595,
+        "height": 842
+      },
+      {
+        "number": 2,
+        "width": 595,
+        "height": 842
+      }
+    ],
+    "blocks": [
+      {
+        "block_id": "b1",
+        "kind": "text",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 40,
+            "x1": 550,
+            "y1": 80
+          }
+        },
+        "text": "1. 로컬 문서 파이프라인",
+        "role": "heading"
+      },
+      {
+        "block_id": "b2",
+        "kind": "text",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 100,
+            "x1": 550,
+            "y1": 140
+          }
+        },
+        "text": "이 문장은 테스트를 위해 직접 작성한 합성 데이터입니다.",
+        "role": "body"
+      },
+      {
+        "block_id": "b3",
+        "kind": "table",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 160,
+            "x1": 550,
+            "y1": 200
+          }
+        },
+        "cells": [
+          [
+            "단계",
+            "출력"
+          ],
+          [
+            "계획",
+            "목차"
+          ],
+          [
+            "검증",
+            "보고서"
+          ]
+        ]
+      },
+      {
+        "block_id": "b4",
+        "kind": "code",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 230,
+            "x1": 550,
+            "y1": 270
+          }
+        },
+        "code": "def double(value):\n    return value * 2\n",
+        "language": "python"
+      },
+      {
+        "block_id": "b5",
+        "kind": "image",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 1,
+          "bbox": {
+            "x0": 40,
+            "y0": 300,
+            "x1": 550,
+            "y1": 340
+          }
+        },
+        "asset_ref": "synthetic://diagram-1",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "caption": "합성 이미지 참조; 실제 파일 없음"
+      },
+      {
+        "block_id": "b6",
+        "kind": "text",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 2,
+          "bbox": {
+            "x0": 40,
+            "y0": 40,
+            "x1": 550,
+            "y1": 80
+          }
+        },
+        "text": "2. 재개와 검증",
+        "role": "heading"
+      },
+      {
+        "block_id": "b7",
+        "kind": "text",
+        "source": {
+          "document_id": "synthetic-training",
+          "version": "fixture-v1",
+          "page": 2,
+          "bbox": {
+            "x0": 40,
+            "y0": 100,
+            "x1": 550,
+            "y1": 140
+          }
+        },
+        "text": "성공한 단계는 보존하고 마지막 체크포인트에서 다시 실행합니다.",
+        "role": "body"
+      }
+    ]
+  }
+}

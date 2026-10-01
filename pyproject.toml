@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pdf-notion-mvp"
+version = "0.1.0"
+description = "Local, provenance-preserving document pipeline with a dry-run publishing plan"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.13,<3", "fastapi>=0.142,<1", "uvicorn>=0.54,<1", "langchain-core>=1.2,<2", "langgraph>=1.2,<2"]
+
+[project.optional-dependencies]
+test = ["pytest>=9,<10", "httpx>=0.28,<1"]
+pdf = ["pdfplumber>=0.11,<1"]
+
+[project.scripts]
+pdf-notion = "pdf_notion_mvp.cli:main"
+pdf-inspect = "pdf_notion_mvp.pdf_inspect:main"
+pdf-ocr = "pdf_notion_mvp.ocr_cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
