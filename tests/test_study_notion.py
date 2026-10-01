@@ -189,3 +189,104 @@ def test_unsupported_literal_source_is_blocked_before_remote_action(planned,payl
     from pdf_notion_mvp.review import document_digest
     files.source.document.blocks[1].text=payload;files.review.source_digest=document_digest(files.source.document)
     with pytest.raises(ValueError):prepare_study(files,'rag.control','체크포인트',HUB,hub,images)
+
+
+@pytest.mark.parametrize('literal',['XML 교육 예제 <content>원문</content> 끝입니다.','XML 교육 예제 <unknown>원문</unknown> 끝입니다.','<content>\n<unknown>직접 작성한 원문</unknown>\n</content>\n</page>'])
+def test_fenced_wrapper_and_unknown_examples_preserve_exact_source(planned,literal):
+    files,hub,_,_,images=planned
+    from pdf_notion_mvp.review import document_digest
+    files.source.document.blocks[1].text=literal;files.review.source_digest=document_digest(files.source.document)
+    before=files.source.model_dump_json()
+    action,cp,images=prepare_study(files,'rag.control','교육',HUB,hub,images)
+    assert '```text\n'+literal+'\n```' in action['pages'][0]['content']
+    assert confirm_study(fetched(cp,images),cp,images).status=='confirmed'
+    assert files.source.model_dump_json()==before
+
+
+@pytest.mark.parametrize('body',['<unknown url="authored-unsupported"/>','<content>\nextra\n</content>','```text\n<content>never closed'])
+def test_structural_unknown_or_malformed_wrapper_is_still_rejected(planned,body):
+    from pdf_notion_mvp.study_notion import complete_record
+    with pytest.raises(ValueError):complete_record(packet(HUB,body))
+
+
+def test_source_and_other_pending_identity_are_preserved(planned,tmp_path):
+    files,hub,_,cp,images=planned
+    source=tmp_path/'source.json';source.write_text(files.source.model_dump_json());before=source.read_bytes()
+    with pytest.raises(ValueError):save_study_checkpoint(source,cp)
+    assert source.read_bytes()==before
+    state=tmp_path/'checkpoint.json';save_study_checkpoint(state,cp);before=state.read_bytes()
+    _,other,_=prepare_study(files,'rag.control','다른 합성 질문',HUB,hub,images)
+    with pytest.raises(ValueError):save_study_checkpoint(state,other)
+    assert state.read_bytes()==before
+
+
+@pytest.mark.parametrize('field',['hub_id','title','expected_content','page_id','status'])
+def test_checkpoint_identity_page_binding_and_monotonic_state(planned,tmp_path,field):
+    cp=planned[3].model_copy(update={'status':'confirmed','page_id':PAGE})
+    path=tmp_path/'checkpoint.json';save_study_checkpoint(path,cp);before=path.read_bytes()
+    changes=dict(hub_id=PAGE,title='different task',expected_content=cp.expected_content+'edited',page_id=HUB,status='pending_readback')
+    with pytest.raises(ValueError):save_study_checkpoint(path,cp.model_copy(update={field:changes[field]}))
+    assert path.read_bytes()==before
+
+
+@pytest.mark.parametrize('kind',['hardlink','protected_input','nonregular','race'])
+def test_checkpoint_alias_and_changed_destination_protection(planned,tmp_path,monkeypatch,kind):
+    import os
+    cp=planned[3];state=tmp_path/'checkpoint.json'
+    if kind=='hardlink':
+        save_study_checkpoint(state,cp);os.link(state,tmp_path/'other.json')
+        before=state.read_bytes()
+        with pytest.raises(ValueError):save_study_checkpoint(state,cp)
+        assert state.read_bytes()==before
+    if kind=='protected_input':
+        save_study_checkpoint(state,cp);before=state.read_bytes()
+        with pytest.raises(ValueError):save_study_checkpoint(state,cp,protected_paths=[state])
+        assert state.read_bytes()==before
+    if kind=='nonregular':
+        state.mkdir()
+        with pytest.raises(ValueError):save_study_checkpoint(state,cp)
+        assert state.is_dir()
+    if kind=='race':
+        # A user file appearing during temporary write must survive the replace boundary.
+        old_open=Path.open
+        def appeared(path,*a,**kw):
+            if path.name.endswith('.tmp'):state.write_text('user file appeared')
+            return old_open(path,*a,**kw)
+        monkeypatch.setattr(Path,'open',appeared)
+        with pytest.raises(ValueError):save_study_checkpoint(state,cp)
+        assert state.read_text()=='user file appeared' and not state.with_name(state.name+'.tmp').exists()
+
+
+@pytest.fixture
+def source_with_inline_diagram(tmp_path):
+    import hashlib
+    from test_study_bundle import PNG,ocr_lesson
+    from pdf_notion_mvp.review import document_digest
+    fixture=load_fixture(Path(__file__).parents[1]);root=tmp_path/'authored-rasters';ocr_lesson(fixture,root)
+    full=next(b for b in fixture.source.document.blocks if b.kind=='image' and b.source.page==1)
+    crop=full.model_copy(deep=True);crop.block_id='authored-inline-diagram';crop.source.method='ocr';crop.source.confidence=0.7
+    crop.source.bbox.x0,crop.source.bbox.y0,crop.source.bbox.x1,crop.source.bbox.y1=40,100,550,280
+    payload=PNG+b'authored distinct image';path=root/'diagram.png';path.write_bytes(payload)
+    crop.asset_ref=str(path);crop.sha256=hashlib.sha256(payload).hexdigest()
+    fixture.source.document.blocks.insert(5,crop);fixture.hierarchy.nodes[1].block_ids.append(crop.block_id)
+    fixture.review.source_digest=document_digest(fixture.source.document)
+    return ReviewFiles(fixture.source,fixture.hierarchy,fixture.review,[],root),full,crop
+
+
+@pytest.mark.parametrize('use_crop',[False,True])
+def test_inline_diagram_cannot_substitute_full_page_raster(source_with_inline_diagram,use_crop):
+    files,full,crop=source_with_inline_diagram;chosen=crop if use_crop else full
+    image=UploadedPageImage(page=1,sha256=chosen.sha256,file_upload_id=UUID('00000000-0000-4000-8000-000000000003'),filename='authored.png')
+    if use_crop:
+        with pytest.raises(ValueError):prepare_study(files,'rag.control','확정',HUB,packet(HUB,'authored hub'),[image])
+    else:
+        action,cp,images=prepare_study(files,'rag.control','확정',HUB,packet(HUB,'authored hub'),[image])
+        assert images[0].sha256==full.sha256 and crop.sha256 in action['pages'][0]['content']
+        assert cp.status=='pending_readback'
+
+
+def test_corrupt_confirmed_checkpoint_cannot_acquire_an_unproven_page(planned,tmp_path):
+    cp=planned[3];path=tmp_path/'checkpoint.json'
+    path.write_text(cp.model_copy(update={'status':'confirmed'}).model_dump_json());before=path.read_bytes()
+    with pytest.raises(ValueError):save_study_checkpoint(path,cp.model_copy(update={'status':'confirmed','page_id':PAGE}))
+    assert path.read_bytes()==before

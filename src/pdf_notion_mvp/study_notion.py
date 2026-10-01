@@ -1,6 +1,7 @@
 """Host-MCP create/readback bridge for one reviewed section; no API client or keys."""
 import json
 import re
+import stat
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
@@ -40,11 +41,32 @@ def complete_record(packet):
             record.get('unknown_block_count') or record.get('unknown_block_ids')):
         raise ValueError('complete native page read required')
     text = record['text']
-    if '<unknown' in text or not text.rstrip().endswith('</page>'):
-        raise ValueError('incomplete or unsupported page wrapper')
-    bodies = re.findall(r'<content>\n?(.*?)\n?</content>',text,re.S)
-    if len(bodies)!=1: raise ValueError('complete content wrapper required')
-    return record, bodies[0]
+    state='before_page';code_prefix=None;offset=0;start=end=None
+    for line in text.splitlines(keepends=True):
+        raw=line.rstrip('\n')
+        if code_prefix is not None:
+            if raw==code_prefix+'```':code_prefix=None
+        elif state=='body' and re.fullmatch(r'\t*```[^`]*',raw):
+            code_prefix=raw[:len(raw)-len(raw.lstrip('\t'))]
+        elif re.match(r'\s*<unknown(?:\s|/?>)',raw):
+            raise ValueError('unsupported native block')
+        elif state=='before_page' and re.fullmatch(r'<page(?:\s[^>]*)?>',raw):
+            state='page_header'
+        elif raw=='<content>':
+            if state!='page_header':raise ValueError('ambiguous content wrapper')
+            state='body';start=offset+len(line)
+        elif raw=='</content>':
+            if state!='body':raise ValueError('invalid content closure')
+            state='after_body';end=offset
+        elif raw=='</page>':
+            if state!='after_body':raise ValueError('invalid page closure')
+            state='done'
+        elif state in ('after_body','done') and raw.strip():
+            raise ValueError('unexpected trailing wrapper content')
+        offset+=len(line)
+    if state!='done' or code_prefix is not None or start is None or end is None:
+        raise ValueError('complete fenced page/content wrapper required')
+    return record,text[start:end]
 
 
 def fence(text, language='text'):
@@ -147,7 +169,20 @@ def prepare_study(files, section_id, question, hub_id, hub_packet, images, check
     if _uuid_from_url(record['url'])!=hub_id:raise ValueError('wrong designated hub')
     bundle,_=build_bundle(files,section_id,question)
     images=[UploadedPageImage.model_validate(i.model_dump() if hasattr(i,'model_dump') else i) for i in images]
-    expected={i['source']['page']:i['sha256'] for i in bundle['original_pages']}
+    expected={}
+    pages={p.number:p for p in files.source.document.pages}
+    for number in bundle['selected_source_pages']:
+        candidates=[b for b in files.source.document.blocks if b.kind=='image' and b.source.page==number]
+        if files.source.kind=='ocr_ir':
+            candidates=[b for b in candidates if b.source.method=='raster']
+            if len(candidates)!=1:raise ValueError('one explicit full-page raster required')
+            box=candidates[0].source.bbox;page=pages[number]
+            if (box.x0,box.y0,box.x1,box.y1)!=(0,0,page.width,page.height):
+                raise ValueError('raster must cover the entire source page')
+        elif len(candidates)!=1 or candidates[0].source.method!='synthetic':
+            raise ValueError('one authored synthetic image reference required')
+        expected[number]=candidates[0].sha256
+
     if not expected or len(images)!=len(expected) or {i.page:i.sha256 for i in images}!=expected or len({i.page for i in images})!=len(images):
         raise ValueError('exact source page/upload digest bindings required')
     if any(not re.fullmatch(r'[0-9a-f]{64}',i.sha256) or Path(i.filename).name!=i.filename or not i.filename.endswith('.png') for i in images):
@@ -156,6 +191,7 @@ def prepare_study(files, section_id, question, hub_id, hub_packet, images, check
     key=sha(encode([str(hub_id),bundle,[i.model_dump(mode='json') for i in images]]))
     content=render_study(bundle,images,key)
     canonical(content,images)
+    complete_record(dict(metadata={'type':'page'},text='<page>\n<content>\n'+content+'\n</content>\n</page>'))
     if checkpoint is not None:
         current=StudyCheckpoint.model_validate(checkpoint.model_dump())
         if (current.operation_key,current.hub_id,current.expected_content)!=(key,hub_id,content):raise ValueError('checkpoint/source/target mismatch')
@@ -199,15 +235,47 @@ def confirm_study(packet, checkpoint, images):
     return cp.model_copy(update={'page_id':page_id,'status':'confirmed'})
 
 
-def save_study_checkpoint(path: Path, checkpoint: StudyCheckpoint):
+def save_study_checkpoint(path: Path, checkpoint: StudyCheckpoint, *, protected_paths=()):
     checkpoint=StudyCheckpoint.model_validate(checkpoint.model_dump())
+    if checkpoint.status=='confirmed' and checkpoint.page_id is None:
+        raise ValueError('confirmed checkpoint requires page binding')
     path=Path(path)
-    if path.is_symlink() or any(p.is_symlink() for p in path.parents):raise ValueError('regular private checkpoint path required')
-    if any((p/'.git').exists() for p in [path.parent,*path.parents]):raise ValueError('checkpoint must be outside Git')
+    if path.suffix!='.json' or path.name.startswith('.env'):
+        raise ValueError('explicit JSON checkpoint required')
+    if path.is_symlink() or any(p.is_symlink() for p in path.parents):
+        raise ValueError('regular private checkpoint path required')
+    if any((p/'.git').exists() for p in [path.parent,*path.parents]):
+        raise ValueError('checkpoint must be outside Git')
+    for protected in map(Path,protected_paths):
+        if path.resolve()==protected.resolve() or (path.exists() and protected.exists() and path.samefile(protected)):
+            raise ValueError('checkpoint must not alias inputs or assets')
+    before=None
+    def regular_target():
+        if path.is_symlink():raise ValueError('checkpoint target became a symlink')
+        info=path.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_size>1_000_000:
+            raise ValueError('regular single-link bounded checkpoint required')
+    if path.exists():
+        regular_target();before=path.read_bytes()
+        try:previous=StudyCheckpoint.model_validate_json(before)
+        except ValueError as exc:raise ValueError('existing target is not this checkpoint; preserve it') from exc
+        if previous.status=='confirmed' and previous.page_id is None:
+            raise ValueError('existing confirmed checkpoint lacks page binding')
+        identity=lambda cp:(cp.operation_key,cp.hub_id,cp.title,cp.expected_content)
+        if identity(previous)!=identity(checkpoint):raise ValueError('different checkpoint identity; preserve pending task')
+        if previous.page_id is not None and checkpoint.page_id!=previous.page_id:
+            raise ValueError('checkpoint page binding cannot be removed or changed')
+        if previous.status=='confirmed' and checkpoint.status!='confirmed':
+            raise ValueError('confirmed checkpoint cannot return to pending')
     path.parent.mkdir(parents=True,exist_ok=True)
     temp=path.with_name(path.name+'.tmp')
     if temp.exists() or temp.is_symlink():raise ValueError('existing checkpoint staging path requires review')
     try:
         with temp.open('x',encoding='utf-8') as stream:stream.write(checkpoint.model_dump_json(indent=2))
+        if before is None:
+            if path.exists() or path.is_symlink():raise ValueError('checkpoint target appeared during save')
+        else:
+            regular_target()
+            if path.read_bytes()!=before:raise ValueError('checkpoint target changed during save')
         temp.replace(path)
     finally:temp.unlink(missing_ok=True)
