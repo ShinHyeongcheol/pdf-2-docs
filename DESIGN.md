@@ -2,7 +2,7 @@
 
 이 MVP는 합성 IR 또는 로컬 OCR 후보 IR을 받아 Notion 게시 **계획**을 만든다. 실제 PDF 검사와
 Mac의 로컬 Vision OCR을 제공한다. 생성 모델 어댑터는 기본 차단 상태이며 모의 응답으로만 검증했다.
-앱 내부의 실제 Notion 쓰기는 아직 구현하지 않았다.
+앱 내부 HTTP Notion 클라이언트는 없으며 호스트 MCP 게시 액션 준비와 재읽기 확인 경계를 제공한다.
 외부 문서 내용은 이 파일에 포함하지 않는다.
 
 | 기능 | 입력 → 출력 | 책임과 검증 |
@@ -139,3 +139,23 @@ ancestry, hydrate nested blocks, exhaust pagination and normalize read metadata 
 Native payload shape follows [Notion block reference](https://developers.notion.com/reference/block).
 Complete snapshots follow [retrieve children pagination](https://developers.notion.com/reference/get-block-children).
 Neither external Notion writes nor remote API acceptance were tested.
+
+## Host-executed Notion MCP publication
+
+The connector bridge turns only independently revalidated mock quiz plans into bounded enhanced Markdown
+append commands for an explicitly bound page under the designated hub. It reads actual page ancestry and
+a source/section identity marker, preserves unrelated page text, and compares parsed app-owned toggles
+against expected native payloads. Literal rich text is escaped before writing, never interpreted as instructions.
+
+A checkpoint is atomically saved before the host dispatches the command. An ambiguous response cannot
+produce another append while the expected remote content is absent; read-back success can clear pending
+state without replay. Confirmation also checks preexisting page content is preserved. The CLI prepares and
+confirms actions but has no credentials or live transport. Host async completion must be resolved before
+confirmation. This does not implement distributed concurrency or native Notion pagination.
+
+Actual connected-tool creation, append and read-back of a small authored synthetic page succeeded.
+One question's native payload matched the remote question/answer/explanation/provenance after Markdown
+normalization, and the preexisting source/synthetic-note prefix was preserved. Confirmation cleared the
+pending checkpoint; a rerun returned unchanged with no second append action. Actual source or user edits,
+concurrent writers and native pagination are not verified by this sample. Cursor chain completeness and
+ambiguous-success recovery remain mock-tested. See NOTION_MCP.md.
