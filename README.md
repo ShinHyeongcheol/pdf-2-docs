@@ -108,7 +108,7 @@ PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.cli \
   --db /absolute/private/ocr-jobs.sqlite --output /absolute/private/run.json
 ```
 
-검사 종료 코드 2는 OCR이 필요하거나 텍스트가 없음을 뜻하며 검사 파일은 생성됩니다. OCR은 문서 SHA·엔진·DPI별 캐시에서 재개합니다. 첫 행은 제목 후보로만 사용하고 전역 의미적 목차를 자동 생성하지 않습니다. 부분 페이지 OCR은 게시 계획을 `rejected`로 차단합니다. 전체 페이지 보존 검증을 통과해도 `human_review_required=true`입니다. OCR 오탈자·인덴트·수식·다단 읽기 순서, 표·코드·그림의 의미 복원은 별도 검토가 필요합니다.
+검사 종료 코드 2는 OCR이 필요하거나 텍스트가 없거나 혼합·빈 페이지 등 검토가 필요한 경우를 뜻하며 검사 파일은 생성됩니다. OCR은 문서 SHA·엔진·DPI별 캐시에서 재개합니다. 첫 행은 제목 후보로만 사용하고 전역 의미적 목차를 자동 생성하지 않습니다. 부분 페이지 OCR은 게시 계획을 `rejected`로 차단합니다. 전체 페이지 보존 검증을 통과해도 `human_review_required=true`입니다. OCR 오탈자·인덴트·수식·다단 읽기 순서, 표·코드·그림의 의미 복원은 별도 검토가 필요합니다.
 
 CLI는 IR 부모 폴더를 신뢰 에셋 범위로 사용합니다. API는 서버에서 지정한 `PDF_NOTION_ASSET_ROOT` 밖 파일을 읽지 않고 해당 설정이 없으면 OCR 입력을 거절합니다. 원문 통합 테스트는 명시적으로 `PDF_NOTION_TEST_PDF`를 지정해야 실행되며 기본 테스트에서는 건너뜁니다.
 
