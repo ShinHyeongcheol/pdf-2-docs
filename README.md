@@ -1,4 +1,5 @@
-제공자 기본 선택은 **Gemini**, OpenAI는 선택형입니다. 키 위치·설정·실제 실행 경계는 [PROVIDERS.md](PROVIDERS.md)를 참고하세요. 현재 CLI는 모의 실행과 설정 확인만 제공합니다.
+제공자 기본 선택은 **Gemini**, OpenAI는 선택형입니다. 키 위치·설정·실제 실행 경계는 [PROVIDERS.md](PROVIDERS.md)를 참고하세요. 단일 실행 CLI는 mock 기본값, 비용 없는 승인 계획, 별도 승인 뒤 Gemini 합성 실행을 제공합니다.
+짧은 실행 안내와 조건부 비용 검사는 [LIVE_RUN.md](LIVE_RUN.md)를 참고하세요.
 
 # pdf-2-docs
 

@@ -93,14 +93,15 @@ class ConfiguredQuizAdapter:
 
 
 def build_provider(settings: ProviderSettings | None = None, *, project_root: Path | None = None,
-                   client_factory: Callable | None = None, key_provider: Callable[[], str | None] | None = None) -> ConfiguredQuizAdapter:
+                   client_factory: Callable | None = None, key_provider: Callable[[], str | None] | None = None,
+                   request_validator: Callable | None = None) -> ConfiguredQuizAdapter:
     settings = ProviderSettings.model_validate((settings or ProviderSettings.from_env()).model_dump())
     provider = settings.provider
     loader = key_provider if key_provider is not None else lambda: selected_key(KEY_NAMES[provider], project_root)
     if provider == "gemini":
         from .gemini_adapter import GeminiQuizAdapter
-        delegate = GeminiQuizAdapter(client_factory=client_factory, key_provider=loader)
+        delegate = GeminiQuizAdapter(client_factory=client_factory, key_provider=loader, request_validator=request_validator)
     else:
         from .openai_adapter import OpenAIQuizAdapter
-        delegate = OpenAIQuizAdapter(client_factory=client_factory, key_provider=loader)
+        delegate = OpenAIQuizAdapter(client_factory=client_factory, key_provider=loader, request_validator=request_validator)
     return ConfiguredQuizAdapter(settings, delegate)

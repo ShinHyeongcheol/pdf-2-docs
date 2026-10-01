@@ -14,9 +14,11 @@ from .quiz import GenerationBlocked, LessonContext, QuizBatch, QuizPolicy
 class GeminiQuizAdapter:
     mode = "gemini"
 
-    def __init__(self, *, client_factory: Callable | None = None, key_provider: Callable[[], str | None] | None = None):
+    def __init__(self, *, client_factory: Callable | None = None, key_provider: Callable[[], str | None] | None = None,
+                 request_validator: Callable[[httpx.Request], None] | None = None):
         self._client_factory = client_factory
         self._key_provider = key_provider
+        self._request_validator = request_validator
         self._calls = 0
         self._budget_lock = Lock()
 
@@ -58,6 +60,8 @@ class GeminiQuizAdapter:
                 raise GenerationBlocked("only the explicit Gemini generation endpoint is allowed")
             if len(request.content) > policy.max_request_bytes or requests:
                 raise GenerationBlocked("serialized byte limit or SDK retry exceeded")
+            if self._request_validator is not None:
+                self._request_validator(request)
             requests += 1
 
         client = factory(model=policy.model, api_key=key, vertexai=False,
