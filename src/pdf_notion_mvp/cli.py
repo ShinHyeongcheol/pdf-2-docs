@@ -8,7 +8,7 @@ from .store import JobStore
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run synthetic IR through the offline document pipeline")
+    parser = argparse.ArgumentParser(description="Run authored, OCR or native PDF IR through the local document pipeline")
     parser.add_argument("fixture", type=Path)
     parser.add_argument("--db", type=Path, default=Path("output/jobs.sqlite"))
     parser.add_argument("--output", type=Path, default=Path("output/run.json"))
@@ -20,7 +20,7 @@ def main():
     job = store.create(source, request_key, PIPELINE_VERSION)
     if job.status == Status.FAILED:
         job = store.resume(job.job_id)
-    job = store.run(job.job_id, default_workflow(asset_root=args.fixture.resolve().parent if source.kind == "ocr_ir" else None))
+    job = store.run(job.job_id, default_workflow(asset_root=args.fixture.resolve().parent if source.kind in {"ocr_ir", "pdf_ir"} else None))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(job.model_dump_json(indent=2), encoding="utf-8")
     print(f"job={job.job_id} status={job.status} revision={job.revision}")

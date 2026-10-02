@@ -94,6 +94,8 @@ run_local_review rag
 
 ## PDF 검사와 Mac 무료 OCR
 
+텍스트 레이어가 있는 새 PDF에는 [로컬 native PDF 경로와 SDK 지원 범위](docs/native-pdf-support.md)를 사용할 수 있습니다. 실제 합성 PDF의 추출·페이지 PNG 검증·상태 재개·모의 설명/문제·게시 중복방지 테스트를 포함하며 유료 모델 호출은 없습니다.
+
 PDF 검사에는 `pdf` extra, OCR에는 Xcode Command Line Tools와 한국어/영어 Apple Vision 지원이 필요합니다. 이미 준비된 검토 입력을 읽는 위 명령에서는 OCR을 다시 실행하지 않습니다.
 
 ```sh

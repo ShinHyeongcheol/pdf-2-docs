@@ -173,7 +173,7 @@ def prepare_study(files, section_id, question, hub_id, hub_packet, images, check
     pages={p.number:p for p in files.source.document.pages}
     for number in bundle['selected_source_pages']:
         candidates=[b for b in files.source.document.blocks if b.kind=='image' and b.source.page==number]
-        if files.source.kind=='ocr_ir':
+        if files.source.kind in {'ocr_ir','pdf_ir'}:
             candidates=[b for b in candidates if b.source.method=='raster']
             if len(candidates)!=1:raise ValueError('one explicit full-page raster required')
             box=candidates[0].source.bbox;page=pages[number]
