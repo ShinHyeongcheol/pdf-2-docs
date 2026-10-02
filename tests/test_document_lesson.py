@@ -185,3 +185,16 @@ def test_offline_recovery_rejects_other_source_failures(approval):
     result,_=run(approval,[],'source');source=next(Path(approval.spec.output_dir).glob('*.json'))
     with pytest.raises(ValueError):recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
     assert not list(source.parent.glob('*filtered.json'))
+
+
+def test_recovery_cannot_hide_blank_explanation_in_removed_exercise(approval):
+    _,context,_=validate_approval(approval,approval.plan_sha256,NOW)
+    def build(**kw):
+        def respond(request):
+            data=draft(context);data['pages'][0]['exercises'][0]['answer']=context['units'][0]['text'];data['pages'][0]['exercises'][0]['explanation']=' '
+            return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':json.dumps(data)}]},'finishReason':'STOP'}]})
+        return httpx.Client(transport=httpx.MockTransport(respond),**kw)
+    execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)
+    source=next(Path(approval.spec.output_dir).glob('*.json'));before=source.read_bytes()
+    with pytest.raises(ValueError):recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
+    assert source.read_bytes()==before and not list(source.parent.glob('*filtered.json'))

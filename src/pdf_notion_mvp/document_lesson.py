@@ -306,7 +306,7 @@ def recover_whole_unit_exercises(result_path,*,budget_path):
         retained=[]
         for i,q in enumerate(page.exercises,1):
             u=units.get(q.unit_id)
-            if u is not None and u['source']['page']==page.page and q.answer==u['text']:
+            if u is not None and u['source']['page']==page.page and q.answer.strip() and q.explanation.strip() and q.answer==u['text']:
                 removed.append(dict(page=page.page,position=i,reason='whole_unit_answer',exercise=q.model_dump(mode='json')))
             else:retained.append(q)
         page.exercises=retained
