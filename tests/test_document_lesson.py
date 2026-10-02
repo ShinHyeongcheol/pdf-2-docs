@@ -215,7 +215,7 @@ def test_unvalidated_provider_packet_preserved_on_schema_error(approval):
     with pytest.raises(ValueError,match='consumed'):execute(approval,approval.plan_sha256,key_provider=lambda:pytest.fail('retry'),now=NOW)
 
 
-def test_wire_array_bounds_remain_for_provider_generation():
-    schema=wire_schema();assert schema['properties']['pages']['maxItems']==8
-    assert schema['$defs']['PageLesson']['properties']['notes']['maxItems']==3
-    assert schema['$defs']['PageLesson']['properties']['exercises']['maxItems']==1
+def test_wire_schema_keeps_local_bounds_without_provider_complexity():
+    schema=wire_schema();assert 'maxItems' not in schema['properties']['pages']
+    assert 'title' in schema['$defs']['PageLesson']['properties']
+    with pytest.raises(ValueError):BatchDraft.model_validate({'pages':[],'diagrams':[]})
