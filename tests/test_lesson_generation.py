@@ -253,8 +253,12 @@ def test_block_and_fragment_namespaces_preserve_both_units(inputs,tmp_path):
     source,outline,review=[json.loads(p.read_text()) for p in paths]
     next(b for b in source['document']['blocks'] if b['block_id']=='b7')['block_id']='fragment:collision'
     for n in outline['nodes']: n['block_ids']=['fragment:collision' if i=='b7' else i for i in n['block_ids']]
+    table_text=copy.deepcopy(source['document']['blocks'][-1])
+    table_text.update(block_id='table-body',text='단계와 출력의 확정 합성 표')
+    source['document']['blocks'].append(table_text)
+    next(n for n in outline['nodes'] if n['node_id']=='unit.part')['block_ids'].append('table-body')
     review['source_digest']=document_digest(FixtureInput.model_validate(source).document)
-    review['fragments'].append(dict(fragment_id='collision',section_id='unit.part',source_block_ids=['b3'],kind='table',
+    review['fragments'].append(dict(fragment_id='collision',section_id='unit.part',source_block_ids=['table-body'],kind='table',
         text='단계와 출력의 확정 합성 표',status='confirmed',basis='authored independent table',correction_ids=[]))
     for p,d in zip(paths,[source,outline,review]): p.write_text(json.dumps(d))
     context=units_for(load_review_files(*paths,[],tmp_path/'unused.json'),'unit.part',[])
