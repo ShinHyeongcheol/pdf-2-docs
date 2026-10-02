@@ -72,12 +72,15 @@ def prepare_index(source: FixtureInput, hierarchy: HierarchicalOutline, layer: R
         links[binding.section_id] = "https://www.notion.so/"+binding.page_id.hex
     review_digest = digest([reviewed.hierarchy.model_dump(mode="json"), reviewed.layer.model_dump(mode="json")])
     corrections = {c.block_id:c for c in reviewed.layer.corrections}
+    excluded = {block_id for fragment in reviewed.layer.fragments
+                if fragment.kind == "code"
+                for block_id in fragment.source_block_ids}
     entries = []
     for section in reviewed.sections:
         if selected is not None and section.section_id not in selected:
             continue
         for block in section.source_blocks:
-            if block.kind != "text" or block.role != "body":
+            if block.kind != "text" or block.role != "body" or block.block_id in excluded:
                 continue
             correction = corrections.get(block.block_id)
             if correction and correction.status == "candidate":

@@ -346,3 +346,18 @@ def test_cli_atomic_output_failure_preserves_previous_result(cli_root,monkeypatc
     assert run_cli(cli_root,["--question","해왕성 질량"])==0
     assert json.loads(output.read_text())["status"]=="unknown"
     assert "fabricated-secret" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('kind,status',[('code','confirmed'),('code','candidate')])
+def test_grouped_code_lineage_cannot_become_answer_evidence(rag,kind,status):
+    from pdf_notion_mvp.review import DerivedFragment
+    before=index_for(rag)
+    rag.review.fragments.append(DerivedFragment(fragment_id='body-group',section_id='rag.control',
+        source_block_ids=['rag-corrected'],kind=kind,status=status,text='독립 합성 그룹',
+        basis='본문 역할 OCR 블록의 그룹 분류 회귀',correction_ids=['rag-fix']))
+    current=index_for(rag)
+    assert 'rag-corrected' not in {entry.source_block_id for entry in current.entries}
+    generator=MockAnswerAdapter(RuntimeError('excluded group must not invoke generator'))
+    result=run_fixture(rag,'인용 검증',generator)
+    assert result.status=='unknown' and result.generation_skipped and generator.calls==0
+    with pytest.raises(ValueError,match='stale'):run_fixture(rag,'인용 검증',index=before)
