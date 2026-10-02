@@ -992,6 +992,7 @@ dependencies = [
 
 [package.optional-dependencies]
 gemini = [
+    { name = "httpx" },
     { name = "langchain-google-genai" },
 ]
 openai = [
@@ -1008,6 +1009,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.142,<1" },
+    { name = "httpx", marker = "extra == 'gemini'", specifier = ">=0.28,<1" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.28,<1" },
     { name = "langchain-core", specifier = ">=1.2,<2" },
     { name = "langchain-google-genai", marker = "extra == 'gemini'", specifier = ">=4,<5" },

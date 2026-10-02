@@ -30,7 +30,9 @@ Use only units on the SAME page for each note or cloze exercise. Cite existing u
 Write 1 to 3 short, useful notes per page if there is readable substantive content.
 Cover/title/outline-only pages may have no notes; explain this in uncertainty.
 For a substantive page supply one cloze exercise: unit_id, answer (exact nontrivial
-substring of that unit text), short explanation based only on this same source.
+substring of that unit text, NEVER the entire unit text), short explanation based only on this same source.
+Pick an exercise from a substantive sentence, not a title or isolated table label.
+For source 'LLM 기반 AI 서비스 개발', 'LLM' is a substring and the full line is not.
 No invented examples or treating sample model answers as factual knowledge.
 At most one exercise per page; no exercise when OCR or sample outputs are unreliable.
 Every page needs a title and uncertainty explaining OCR/code/version limitations.
@@ -285,5 +287,51 @@ def execute(approval,expected_sha,*,client_factory=None,key_provider=None,now=No
         if db.in_transaction:db.execute('ROLLBACK')
         if reserved:
             ledger_check();db.execute('UPDATE reservations SET status=?,request_count=?,error_code=? WHERE operation=?',('failed',requests,safe_error_code(exc),op))
+        raise
+    finally:db.close()
+
+
+def recover_whole_unit_exercises(result_path,*,budget_path):
+    """Offline removal of unusable full-unit clozes; preserve every provider string."""
+    path=Path(result_path);_regular(path);original=read_json_input(path,max_bytes=2000000)
+    if original['status']!='failed_content_validation' or original['errors']!=['source_grounding_validation_failed']:
+        raise ValueError('only grounded whole-unit exercise failures are recoverable')
+    inputs=[Path(p) for p in original['input_paths']]
+    files=load_review_files(*inputs,[],path.parent/'unused.json')
+    context,_=context_for(files,original['context']['pages'],[DiagramEvidence.model_validate(d['evidence']) for d in original['context']['diagrams']])
+    if context!=original['context'] or fingerprint(context)!=original['context_digest'] or [sha(p.read_bytes()) for p in inputs]!=original['input_sha256']:
+        raise ValueError('recovery source changed')
+    draft=BatchDraft.model_validate(original['draft']);units={u['unit_id']:u for u in context['units']};removed=[]
+    for page in draft.pages:
+        retained=[]
+        for i,q in enumerate(page.exercises,1):
+            u=units.get(q.unit_id)
+            if u is not None and u['source']['page']==page.page and q.answer==u['text']:
+                removed.append(dict(page=page.page,position=i,reason='whole_unit_answer',exercise=q.model_dump(mode='json')))
+            else:retained.append(q)
+        page.exercises=retained
+    if not removed:raise ValueError('no whole-unit exercise failure found')
+    verify_draft(context,draft)  # Reject all remaining error categories, without repairing them.
+    result=dict(original,draft=draft.model_dump(mode='json'),errors=[],status='ready_for_content_review',
+        exercise_recovery=dict(method='remove_whole_unit_clozes_only',removed=removed,original_result_path=str(path.resolve()),
+            original_result_digest=fingerprint(original),provider_text_changed=False,additional_model_requests=0))
+    target=path.with_name(path.stem+'-filtered.json');private_destination(target.parent,inputs);_regular(target)
+    ledger=Path(budget_path);_regular(ledger)
+    if not ledger.is_file():raise ValueError('existing shared budget required')
+    db=_budget_connection(ledger)
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT status,result_path,result_sha,request_count FROM reservations WHERE operation=?',(original['operation_key'],)).fetchone()
+        if row==('completed',str(target.resolve()),fingerprint(result),1):
+            if read_json_input(target,max_bytes=2000000)!=result:raise ValueError('recovered result changed')
+            db.execute('COMMIT');return result,'unchanged'
+        if row!=('failed',str(path.resolve()),fingerprint(original),1):raise ValueError('failed executor receipt mismatch')
+        if target.exists():raise ValueError('existing recovery without receipt; preserve it')
+        with target.open('x',encoding='utf-8') as f:
+            f.write(json.dumps(result,ensure_ascii=False,indent=2)+'\n');f.flush();os.fsync(f.fileno())
+        db.execute('UPDATE reservations SET status=?,result_path=?,result_sha=? WHERE operation=?',('completed',str(target.resolve()),fingerprint(result),original['operation_key']))
+        db.execute('COMMIT');return result,'written'
+    except BaseException:
+        if db.in_transaction:db.execute('ROLLBACK')
         raise
     finally:db.close()

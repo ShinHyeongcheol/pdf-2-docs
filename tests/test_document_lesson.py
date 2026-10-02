@@ -159,3 +159,29 @@ def test_multi_page_wrong_page_citation_and_unordered_scope(approval):
     with pytest.raises(ValueError,match='wrong-page'):verify_draft(context,BatchDraft.model_validate(value))
     with pytest.raises(ValueError):context_for(files,[2,1])
     with pytest.raises(ValueError):context_for(files,[True])
+
+
+def test_offline_whole_unit_exercise_removal_preserves_original_cost_and_notes(approval):
+    seen=[]
+    _,context,_=validate_approval(approval,approval.plan_sha256,NOW)
+    def build(**kw):
+        def respond(request):
+            seen.append(request);data=draft(context);data['pages'][0]['exercises'][0]['answer']=context['units'][0]['text']
+            return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':json.dumps(data)}]},'finishReason':'STOP'}]})
+        return httpx.Client(transport=httpx.MockTransport(respond),**kw)
+    result,_=execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)
+    assert result['status']=='failed_content_validation'
+    source=next(Path(approval.spec.output_dir).glob('*.json'));before=source.read_bytes()
+    # The fixture's quiz unit is its title (first source unit).
+    fixed,status=recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
+    assert status=='written' and fixed['draft']['pages'][0]['notes']==result['draft']['pages'][0]['notes']
+    assert fixed['draft']['pages'][0]['exercises']==[] and source.read_bytes()==before
+    assert fixed['exercise_recovery']['additional_model_requests']==0 and len(seen)==1
+    assert recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)==(fixed,'unchanged')
+    with sqlite3.connect(approval.spec.budget_ledger) as db:assert db.execute('SELECT sum(cost),sum(request_count) FROM reservations').fetchone()==(COST_MICRO_USD,1)
+
+
+def test_offline_recovery_rejects_other_source_failures(approval):
+    result,_=run(approval,[],'source');source=next(Path(approval.spec.output_dir).glob('*.json'))
+    with pytest.raises(ValueError):recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
+    assert not list(source.parent.glob('*filtered.json'))
