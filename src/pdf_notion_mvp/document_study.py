@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import UUID
 
-from .document_lesson import BatchDraft, DiagramEvidence, context_for, verify_draft
+from .document_lesson import BatchDraft, DiagramEvidence, context_for, verify_draft,cloze_stem
 from .lesson_generation import ContentReview, _regular
 from .live_run import fingerprint
 from .rag_files import load_review_files, read_json_input
@@ -77,6 +77,8 @@ def accept_batch(result_path, review_path, budget_path, *, revision_path=None):
                 v['basis']!='independent_local_visual_observation' or not v['text'].strip()):
             raise ValueError('source-bound local visual candidate required')
     return dict(schema_version='1',status='source_reviewed_with_local_corrections' if revision else 'source_reviewed',
+        acceptance_inputs=dict(result_path=str(result_path),review_path=str(Path(review_path).resolve()),
+            budget_path=str(ledger),revision_path=str(Path(revision_path).resolve()) if revision_path else None),
         original_result_digest=fingerprint(result),accepted_material_digest=fingerprint(material),
         provider_result_status=result['status'],context=context,draft=draft.model_dump(mode='json'),
         local_visual_notes=visuals,exercise_origins=revision.get('exercise_origins',{}) if revision else {},
@@ -86,6 +88,9 @@ def accept_batch(result_path, review_path, budget_path, *, revision_path=None):
 
 def render_batch(material,source_url,*,diagram_urls=None):
     """Native source toggles use JSON to preserve OCR whitespace and adjacent units."""
+    references=material.get('acceptance_inputs')
+    if not references or accept_batch(**references)!=material:
+        raise ValueError('accepted material changed; reaccept current source and review')
     from .notion_mcp import _uuid_from_url
     url=urlsplit(source_url)
     if url.scheme!='https' or url.hostname not in {'app.notion.com','www.notion.so','notion.so'} or url.query or url.fragment or url.username or url.password:
@@ -108,9 +113,10 @@ def render_batch(material,source_url,*,diagram_urls=None):
         for i,q in enumerate(p.exercises,1):
             key=f'p{p.page}.exercise{i}'
             origin=material.get('exercise_origins',{}).get(key,'Gemini 초안 · 독립 대조 및 국소 수정 여부는 검토 기록 참조')
-            parts += ['### 빈칸 문제',encode_text(str(origin)),fence(units[q.unit_id]['text'].replace(q.answer,'[빈칸]',1)),
+            evidence=[units[j] for j in q.context_unit_ids]+[units[q.unit_id]] if q.context_unit_ids else units[q.unit_id]
+            parts += ['### 빈칸 문제',encode_text(str(origin)),fence(cloze_stem(context,q)),
                 toggle('정답과 해설',prose('정답: '+q.answer)+'\n'+prose(q.explanation)),
-                toggle('문제 원문 · 블록·페이지·좌표',fence(json.dumps(units[q.unit_id],ensure_ascii=False,indent=2),'json'))]
+                toggle('문제 원문 · 블록·페이지·좌표',fence(json.dumps(evidence,ensure_ascii=False,indent=2),'json'))]
         for d in draft.diagrams:
             evidence=next(x for x in context['diagrams'] if x['evidence']['image_block_id']==d.image_block_id)
             if evidence['source']['page']!=p.page:continue

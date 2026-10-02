@@ -60,6 +60,7 @@ class Cloze(Contract):
     unit_id:str
     answer:str=Field(min_length=1,max_length=300)
     explanation:str=Field(min_length=1,max_length=1000)
+    context_unit_ids:list[str]=Field(default_factory=list,max_length=4)
 
 
 class PageLesson(Contract):
@@ -166,6 +167,12 @@ def expected_request(context,prepared):
         'generationConfig':{'candidateCount':1,'maxOutputTokens':8192,'responseMimeType':'application/json','responseJsonSchema':wire_schema()}}
 
 
+def cloze_stem(context,q):
+    selected=set(q.context_unit_ids+[q.unit_id])
+    return '\n'.join(u['text'].replace(q.answer,'[빈칸]',1) if u['unit_id']==q.unit_id else u['text']
+        for u in context['units'] if u['unit_id'] in selected)
+
+
 def verify_draft(context,draft):
     d=BatchDraft.model_validate(draft.model_dump());units={u['unit_id']:u for u in context['units']}
     if [p.page for p in d.pages]!=context['pages']:raise ValueError('exact ordered page coverage required')
@@ -176,9 +183,13 @@ def verify_draft(context,draft):
             if any(i not in units or units[i]['source']['page']!=page.page for i in n.unit_ids):raise ValueError('wrong-page note evidence')
         for q in page.exercises:
             u=units.get(q.unit_id)
+            extra=q.context_unit_ids
+            if (len(set(extra))!=len(extra) or q.unit_id in extra or
+                    any(i not in units or units[i]['source']['page']!=page.page for i in extra)):
+                raise ValueError('wrong-page or duplicate cloze context')
             if (u is None or u['source']['page']!=page.page or not q.explanation.strip() or
-                not q.answer.strip() or q.answer not in u['text'] or q.answer==u['text'] or
-                len(re.sub(r'[^\w]','',u['text'].replace(q.answer,'',1)))<4):
+                not q.answer.strip() or q.answer not in u['text'] or
+                len(re.sub(r'[^\w]','',cloze_stem(context,q).replace('[빈칸]','')))<4):
                 raise ValueError('unsupported cloze answer')
     images={d['evidence']['image_block_id']:d['evidence'] for d in context['diagrams']}
     if [d.image_block_id for d in d.diagrams]!=list(images):raise ValueError('exact diagram coverage required')
@@ -334,7 +345,7 @@ def recover_whole_unit_exercises(result_path,*,budget_path):
         retained=[]
         for i,q in enumerate(page.exercises,1):
             u=units.get(q.unit_id)
-            if u is not None and u['source']['page']==page.page and q.answer.strip() and q.explanation.strip() and q.answer==u['text']:
+            if u is not None and u['source']['page']==page.page and q.answer.strip() and q.explanation.strip() and q.answer==u['text'] and not q.context_unit_ids:
                 removed.append(dict(page=page.page,position=i,reason='whole_unit_answer',exercise=q.model_dump(mode='json')))
             else:retained.append(q)
         page.exercises=retained

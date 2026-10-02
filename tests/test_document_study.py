@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from test_document_lesson import approval, run
-from pdf_notion_mvp.document_lesson import BatchDraft
+from pdf_notion_mvp.document_lesson import BatchDraft,verify_draft,cloze_stem
 from pdf_notion_mvp.document_study import accept_batch,item_ids,render_batch,prose
 from pdf_notion_mvp.live_run import fingerprint
 from pdf_notion_mvp.notion_mcp import decode_text
@@ -89,3 +89,37 @@ def test_visual_candidate_cannot_attach_an_unrelated_image(saved):
 def test_dotted_code_names_remain_literal_without_native_domain_links():
     assert decode_text(prose('model.stream()과 chunk.content를 예제로 제시합니다.'))=='`model.stream`()과 `chunk.content`를 예제로 제시합니다.'
     assert 'http://' not in prose('model.stream()')
+
+
+@pytest.mark.parametrize('damage',['note','answer','decision','context','ids','disk_review'])
+def test_render_reaccepts_current_files_and_rejects_post_acceptance_mutation(saved,damage):
+    path,rp,ledger,_,_=saved;material=accept_batch(path,rp,ledger)
+    if damage=='note':material['draft']['pages'][0]['notes'][0]['text']='unsupported new claim'
+    elif damage=='answer':material['draft']['pages'][0]['exercises'][0]['answer']='unsupported answer'
+    elif damage=='decision':material['review']['decision']='needs_changes'
+    elif damage=='context':material['context']['units'][0]['text']='changed source'
+    elif damage=='ids':material['review']['reviewed_ids']=[]
+    else:
+        r=json.loads(rp.read_text());r['decision']='needs_changes';rp.write_text(json.dumps(r))
+    with pytest.raises(ValueError):render_batch(material,'https://www.notion.so/00000000000000000000000000000001')
+
+
+def table_question():
+    context=dict(pages=[1],diagrams=[],units=[dict(unit_id=i,text=t,source=dict(page=p)) for i,t,p in
+        [('heading','지원 형식 · 로더',1),('answer','NotionDirectoryLoader',1),('format','Notion 페이지',1),('other','다른 페이지',2)]])
+    draft=BatchDraft.model_validate(dict(pages=[dict(page=1,title='작성한 표',notes=[],uncertainty='합성 관계 검수 후보',
+        exercises=[dict(unit_id='answer',answer='NotionDirectoryLoader',explanation='작성한 표의 로더와 지원 형식 관계 후보',context_unit_ids=['heading','format'])])],diagrams=[]))
+    return context,draft
+
+
+def test_table_relationship_has_exact_source_units_and_keeps_row_clues():
+    context,draft=table_question();assert verify_draft(context,draft)
+    assert cloze_stem(context,draft.pages[0].exercises[0])=='지원 형식 · 로더\n[빈칸]\nNotion 페이지'
+    draft.pages[0].exercises[0].context_unit_ids=[]
+    with pytest.raises(ValueError,match='unsupported'):verify_draft(context,draft)
+
+
+@pytest.mark.parametrize('ids',[['missing'],['other'],['heading','heading'],['answer']])
+def test_cloze_context_cannot_cross_pages_or_hide_unknown_duplicate_ids(ids):
+    context,draft=table_question();draft.pages[0].exercises[0].context_unit_ids=ids
+    with pytest.raises(ValueError,match='context'):verify_draft(context,draft)
