@@ -193,10 +193,10 @@ def verify_draft(context,draft):
                 raise ValueError('unsupported cloze answer')
     images={d['evidence']['image_block_id']:d['evidence'] for d in context['diagrams']}
     if [d.image_block_id for d in d.diagrams]!=list(images):raise ValueError('exact diagram coverage required')
-    for d in d.diagrams:
-        obs={o['observation_id'] for o in images[d.image_block_id]['observations']}
-        if (not d.text.strip() or not d.uncertainty.strip() or len(set(d.observation_ids))!=len(d.observation_ids) or
-            not set(d.observation_ids)<=obs):raise ValueError('unsupported diagram evidence')
+    for diagram in d.diagrams:
+        obs={o['observation_id'] for o in images[diagram.image_block_id]['observations']}
+        if (not diagram.text.strip() or not diagram.uncertainty.strip() or len(set(diagram.observation_ids))!=len(diagram.observation_ids) or
+            not set(diagram.observation_ids)<=obs):raise ValueError('unsupported diagram evidence')
     return d
 
 

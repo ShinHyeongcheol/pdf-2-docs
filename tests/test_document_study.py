@@ -123,3 +123,13 @@ def test_table_relationship_has_exact_source_units_and_keeps_row_clues():
 def test_cloze_context_cannot_cross_pages_or_hide_unknown_duplicate_ids(ids):
     context,draft=table_question();draft.pages[0].exercises[0].context_unit_ids=ids
     with pytest.raises(ValueError,match='context'):verify_draft(context,draft)
+
+
+@pytest.mark.parametrize('source_url',[
+    'https://www.notion.so/"/><mention-page url="https://example.invalid/00000000000000000000000000000001',
+    'https://www.notion.so/00000000000000000000000000000001"/><mention-page>',
+    'https://www.notion.so/path/00000000000000000000000000000001',
+])
+def test_source_reference_cannot_inject_native_markup(saved,source_url):
+    p,r,b,_,_=saved;material=accept_batch(p,r,b)
+    with pytest.raises(ValueError):render_batch(material,source_url)

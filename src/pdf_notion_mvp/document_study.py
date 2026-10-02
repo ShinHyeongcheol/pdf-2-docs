@@ -95,7 +95,10 @@ def render_batch(material,source_url,*,diagram_urls=None):
     url=urlsplit(source_url)
     if url.scheme!='https' or url.hostname not in {'app.notion.com','www.notion.so','notion.so'} or url.query or url.fragment or url.username or url.password:
         raise ValueError('explicit native source page URL required')
-    _uuid_from_url(source_url)
+    identifier=_uuid_from_url(source_url)
+    if url.path.lower() not in {'/'+identifier.hex,'/'+str(identifier),'/p/'+identifier.hex,'/p/'+str(identifier)}:
+        raise ValueError('canonical native source page path required')
+    source_url='https://app.notion.com/p/'+identifier.hex
     context=material['context'];draft=BatchDraft.model_validate(material['draft'])
     units={u['unit_id']:u for u in context['units']};diagram_urls=diagram_urls or {}
     marker='pdf-notion-document-study:v1:'+material['accepted_material_digest']
