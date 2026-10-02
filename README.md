@@ -133,12 +133,12 @@ PYTHONPATH=src .venv/bin/python -m uvicorn pdf_notion_mvp.api:create_demo_app \
 
 - [DESIGN.md](DESIGN.md): 중간 표현·교체 가능한 어댑터·상태 전이·구조 검증.
 - [GRAPH_REVIEW.md](GRAPH_REVIEW.md): 합성 SVG의 모의 해설 토글; 실제 PDF 그래프 입력은 미연결.
-- [PROVIDERS.md](PROVIDERS.md), [LIVE_RUN.md](LIVE_RUN.md): Gemini 기본·OpenAI 선택형 제공자, 별도 승인과 단일 실행 원장. 실제 API 시험은 보류 중이며 위 로컬 명령은 키를 읽지 않습니다.
+- [PROVIDERS.md](PROVIDERS.md), [LIVE_RUN.md](LIVE_RUN.md): Gemini 기본·OpenAI 선택형 제공자, 별도 승인과 단일 실행 원장. 실제 API 실행은 검수된 승인 계획과 사설 실행 증거로 관리하며 위 로컬 명령은 키를 읽지 않습니다.
 - [PROVIDER_PUBLICATION.md](PROVIDER_PUBLICATION.md): 완료 원장·승인·현재 근거를 재검증하는 provider 결과의 중립적 검토 게시 계획. fake SDK 결과는 실제 모델 응답이 아닙니다.
 - [NOTION_MCP.md](NOTION_MCP.md): 모의 문제 토글의 호스트 준비·읽기 확인 경계.
 - [STUDY_NOTION.md](STUDY_NOTION.md): 한 절의 새 페이지 인수·pending/confirmed 체크포인트·동일 작업 보존. 실제 MCP dispatch는 호스트가 수행하며 독립 실행 게시 CLI는 없습니다.
 
-실제 Notion create 성공만으로 완료하지 않습니다. 최종 내용·직접 부모·마커·코드·이미지 읽기 확인이 필요합니다. 현재 표시 보정 쓰기는 자동 승인 검토에서 거절되어 중단했고 최종 확인은 pending입니다. 모델·Notion 외부 검증이 재개되기 전에는 실제 모델 결과의 최종 게시가 검증됐다고 표현하지 않습니다.
+실제 Notion create 성공만으로 완료하지 않습니다. 최종 내용·직접 부모·마커·코드·이미지 읽기 확인이 필요합니다. 외부 실행의 완료 여부는 해당 실행의 응답·원장·체크포인트·최종 읽기 확인 증거로 판단합니다. 로컬 모의 테스트와 사설 외부 실행의 결과를 구분해 기록합니다.
 
 전체 문서의 외부 호출 없는 감사·검수 검색·페이지 체크포인트·PNG 도표 후보 계약은 [DOCUMENT_LOCAL.md](DOCUMENT_LOCAL.md)를 참고하세요.
 
