@@ -21,6 +21,7 @@ from pydantic import Field
 from .contracts import Contract
 from .live_run import ModelSnapshot, fingerprint
 from .providers import selected_key
+from .provider_diagnostics import safe_error_diagnostic
 from .quiz import cloze_question, prepare_context
 from .rag_files import load_review_files, read_json_input
 from .study_bundle import build_bundle, check_existing, encode, private_destination, sha, render as render_source
@@ -320,7 +321,8 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
     # Keep the shared budget beside the results, outside every source directory.
     budget=Path(budget_path); private_destination(budget.parent,[Path(p) for p in a.spec.input_paths])
     op=operation_key(a.spec); result_path=root/(op+'.json'); provider_path=root/(op+'-provider.json')
-    _regular(result_path); _regular(provider_path)
+    error_path=root/(op+'-error.json')
+    _regular(result_path); _regular(provider_path); _regular(error_path)
     db=_budget_connection(budget)
     requests=0; reserved=False
     try:
@@ -336,7 +338,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             return raw,'unchanged'
         total=db.execute('SELECT coalesce(sum(cost),0) FROM reservations').fetchone()[0]
         if total+COST_MICRO_USD>BUDGET_MICRO_USD: raise ValueError('cumulative cost budget exhausted')
-        if result_path.exists() or provider_path.exists(): raise ValueError('existing result without receipt; preserve it')
+        if result_path.exists() or provider_path.exists() or error_path.exists(): raise ValueError('existing result without receipt; preserve it')
         db.execute('INSERT INTO reservations(operation,run_id,cost,status,result_path,result_sha) VALUES(?,?,?,?,?,?)',(op,a.spec.run_id,COST_MICRO_USD,'reserved',None,None))
         db.execute('COMMIT')
         reserved=True
@@ -359,7 +361,22 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
         def preserve_response(response):
             # HTTP response hooks run before the SDK parses structured output.
             # Never persist credentials, request headers or provider error bodies.
-            if response.status_code != 200: return
+            if response.status_code != 200:
+                diagnostic=safe_error_diagnostic(response,expected_request(context),key,a.spec.model_snapshot.model)
+                receipt=dict(schema_version='1',status='observed_safe_error_diagnostic',
+                    operation_key=op,context_digest=a.spec.context_digest,
+                    request_digest=a.spec.request_digest,request_count=requests,diagnostic=diagnostic)
+                root.mkdir(parents=True,exist_ok=True); _regular(error_path)
+                fd=os.open(error_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'w',encoding='utf-8') as stream:
+                    stream.write(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n')
+                    stream.flush();os.fsync(stream.fileno())
+                hook_db=_budget_connection(budget)
+                try:
+                    hook_db.execute('UPDATE reservations SET result_path=?,result_sha=? WHERE operation=?',
+                        (str(error_path),fingerprint(receipt),op))
+                finally: hook_db.close()
+                return
             response.read()
             if len(response.content)>2_000_000: raise ValueError('response size exceeded')
             try: packet=response.json()
@@ -496,7 +513,7 @@ class ContentReview(Contract):
     review_kind: Literal['independent_source_comparison'] = 'independent_source_comparison'
 
 
-def render_lesson(result,review):
+def render_lesson(result,review,title='Model'):
     esc=lambda s:html.escape(str(s),quote=True)
     units={u['unit_id']:u for u in result['context']['units']}
     def refs(citations):
@@ -511,10 +528,10 @@ def render_lesson(result,review):
     pieces=['<!doctype html><html lang="ko"><head><meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src \'self\' file:; base-uri \'none\'; form-action \'none\'">',
-        '<title>Model · 학습 노트와 연습 문제</title><style>',
+        '<title>'+esc(title)+' · 학습 노트와 연습 문제</title><style>',
         'html{scroll-behavior:smooth}body{margin:0;background:#f6f4ef;color:#172a3b;font:17px/1.85 -apple-system,BlinkMacSystemFont,sans-serif}main{max-width:920px;margin:auto;padding:32px 24px 80px}header{border-top:6px solid #b78938;padding:24px 0}h1{font-size:42px;margin:4px 0 10px;line-height:1.2}h2{font-size:25px;margin-top:0}h3{font-size:21px}a{color:#1b607c}nav{display:flex;flex-wrap:wrap;gap:12px;margin:22px 0}section,.question{background:white;border:1px solid #e2e4e4;border-radius:16px;padding:26px;margin:24px 0}p{margin:12px 0}small,.muted{color:#526575;font-size:14px}.badge{display:inline-block;background:#e9f1ef;color:#285b51;padding:3px 12px;border-radius:30px;font-size:13px}details{margin:12px 0}summary{cursor:pointer;font-weight:600}blockquote{border-left:3px solid #b78938;padding:8px 16px;margin:14px 0;background:#fbf9f4;white-space:pre-wrap}pre,p,small,blockquote{overflow-wrap:anywhere;word-break:normal}pre{white-space:pre-wrap}.answer{border-top:1px solid #ddd;padding-top:12px}@media(max-width:600px){main{padding:20px 16px 48px}h1{font-size:32px}section,.question{padding:20px}}',
         '</style></head><body><main><header><p class="muted">한 절을 읽고, 개념을 확인하고, 문제로 복습하기</p>',
-        '<h1>Model</h1><p>학습 노트와 연습 문제</p><span class="badge">독립 자료 대조 · 사용자 최종 확인 전</span>',
+        '<h1>'+esc(title)+'</h1><p>학습 노트와 연습 문제</p><span class="badge">독립 자료 대조 · 사용자 최종 확인 전</span>',
         '<p class="muted">확정 교정 자료로 Gemini가 생성한 설명과 문제입니다. 원문 확인과 기술적 사실 검증은 구분하며, 코드를 실행하지 않았습니다.</p>',
         '<nav><a href="#notes">학습 노트</a><a href="#practice">연습 문제</a><a href="source.html">원본·교정·코드 확인</a></nav></header>',
         '<div id="notes">']
@@ -528,7 +545,7 @@ def render_lesson(result,review):
         pieces.append(f'<article class="question"><small>문제 {i:02d}</small><h3>{esc(q["question"])}</h3><details><summary>정답과 해설 보기</summary><div class="answer"><p><strong>정답 · {esc(q["answer"])}</strong></p><p>{esc(q["explanation"]["text"])}</p>'+refs(q['explanation']['citations'])+'</div></details>'+refs([dict(unit_id=q['unit_id'],quote=q['source_quote'])])+'</article>')
     pieces.append('<section><h2>읽기 범위와 확인 사항</h2>')
     for note in review.notes: pieces.append(f'<p>{esc(note)}</p>')
-    pieces.append('<p class="muted">원본 이미지·코드 후보는 원문 확인 화면에만 보존합니다. 이미지를 모델에 전송하지 않았습니다. 전체 162페이지 검수나 Notion 게시 완료를 뜻하지 않습니다.</p><a href="lesson.json">설명·문제·출처 JSON</a></section></main></body></html>')
+    pieces.append('<p class="muted">원본 이미지·코드 후보는 원문 확인 화면에만 보존합니다. 이미지를 모델에 전송하지 않았습니다. 전체 문서 검수나 Notion 게시 완료를 뜻하지 않습니다.</p><a href="lesson.json">설명·문제·출처 JSON</a></section></main></body></html>')
     return '\n'.join(pieces).encode()
 
 
@@ -560,7 +577,7 @@ def write_reading_bundle(result_path,review_path,files,section,question,output_d
     root=private_destination(Path(output_dir),[Path(p) for p in [result_path,review_path,*inputs]])
     bundle,assets=build_bundle(files,section,question)
     data=dict(generation=result,content_review=review.model_dump(mode='json'))
-    payloads={'lesson.json':encode(data),'index.html':render_lesson(result,review),'study.json':encode(bundle),'source.html':render_source(bundle),**assets}
+    payloads={'lesson.json':encode(data),'index.html':render_lesson(result,review,bundle['title']),'study.json':encode(bundle),'source.html':render_source(bundle),**assets}
     payloads['manifest.json']=encode({'schema_version':'1','files':{k:sha(v) for k,v in payloads.items()}})
     final=root/('lesson-'+sha(payloads['lesson.json']))
     if final.exists() or final.is_symlink():

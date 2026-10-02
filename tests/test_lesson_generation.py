@@ -50,6 +50,8 @@ def factory(context,seen,violation=None):
     from langchain_google_genai import ChatGoogleGenerativeAI
     def respond(request):
         seen.append(request)
+        if isinstance(violation,dict):
+            return httpx.Response(violation['http_status'],json=violation['packet'])
         if violation=='timeout': raise httpx.ReadTimeout('fabricated-private-key',request=request)
         data=draft_for(context).model_dump(mode='json')
         if violation=='duplicate_ids': data['exercises'][0]['explanation']['claim_id']=data['topics'][0]['claims'][0]['claim_id']
@@ -373,6 +375,98 @@ def test_sdk_schema_rejection_records_only_allowlisted_diagnostic(inputs,tmp_pat
     db.close()
     assert b'fabricated-private-key' not in (tmp_path/'ledger/budget.sqlite').read_bytes()
     assert safe_error_code(type('ProviderSecretClass', (Exception,), {})('private'))=='OtherError'
+
+
+@pytest.mark.parametrize('details,expected',[
+    ([{'@type':'type.googleapis.com/google.rpc.ErrorInfo','reason':'API_KEY_INVALID',
+       'metadata':{'private':'fabricated-private-key'}}], {'reasons':['API_KEY_INVALID']}),
+    ([{'@type':'type.googleapis.com/google.rpc.ErrorInfo','reason':'API_KEY_EXPIRED'}],
+     {'reasons':['API_KEY_EXPIRED']}),
+    ([{'@type':'type.googleapis.com/google.rpc.BadRequest','fieldViolations':[
+        {'field':'generation_config.response_json_schema.properties.topics.max_items',
+         'description':'fabricated-private-key private provider text'},
+        {'field':'generationConfig.fabricated-private-key','description':'private'},
+        {'field':'generationConfig.arbitrary_private_data'}]}],
+     {'field_paths':['generation_config.response_json_schema.properties.topics.max_items']}),
+])
+def test_sdk_http400_generic_classification_has_distinct_safe_receipt(inputs,tmp_path,details,expected):
+    _,a=inputs;seen=[]
+    violation={'http_status':400,'packet':{'error':{'code':400,'status':'INVALID_ARGUMENT',
+        'message':'INVALID_ARGUMENT fabricated-private-key private provider text','details':details}}}
+    with pytest.raises(Exception): run(tmp_path,a,seen,violation)
+    ledger=tmp_path/'ledger/budget.sqlite'; db=sqlite3.connect(ledger)
+    status,path,digest,count,cost,error=db.execute(
+        'select status,result_path,result_sha,request_count,cost,error_code from reservations').fetchone()
+    db.close()
+    saved=Path(path);before=saved.read_bytes();receipt=json.loads(before)
+    assert (status,count,cost)==('failed',1,COST_MICRO_USD)
+    assert error==('GoogleInvalidRequestError:schema' if 'field_paths' in expected
+                   else 'GoogleInvalidRequestError:invalid_argument')
+    assert receipt['status']=='observed_safe_error_diagnostic' and fingerprint(receipt)==digest
+    assert receipt['operation_key']==operation_key(a.spec)
+    assert receipt['request_digest']==a.spec.request_digest and receipt['context_digest']==a.spec.context_digest
+    assert receipt['diagnostic']['provider_status']=='INVALID_ARGUMENT'
+    for key,value in expected.items(): assert receipt['diagnostic'][key]==value
+    assert saved.stat().st_mode & 0o777==0o600
+    assert b'fabricated-private-key' not in before and b'private provider text' not in before
+    assert not receipt['diagnostic']['raw_error_body_saved']
+    assert not receipt['diagnostic']['account_tier_verified']
+    with pytest.raises(ValueError,match='consumed'):
+        execute(a,a.plan_sha256,ledger,tmp_path/'results',ROOT,
+            client_factory=lambda **kw:pytest.fail('second client'),key_provider=lambda:pytest.fail('second key'),now=NOW)
+    assert saved.read_bytes()==before and len(seen)==1
+
+
+def test_sdk_http429_free_metric_observation_is_not_account_tier_verification(inputs,tmp_path):
+    _,a=inputs;seen=[]
+    violation={'http_status':429,'packet':{'error':{'status':'RESOURCE_EXHAUSTED','message':'private',
+        'details':[{'@type':'type.googleapis.com/google.rpc.QuotaFailure','violations':[
+            {'quotaMetric':'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+             'quotaDimensions':{'model':'gemini-3.1-flash-lite','project':'private'},'description':'private'}]},
+            {'@type':'type.googleapis.com/google.rpc.RetryInfo','retryDelay':'34s'}]}}}
+    with pytest.raises(Exception):run(tmp_path,a,seen,violation)
+    db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
+    status,path,count=db.execute('select status,result_path,request_count from reservations').fetchone();db.close()
+    diagnostic=json.loads(Path(path).read_text())['diagnostic']
+    assert status=='failed' and count==len(seen)==1
+    assert diagnostic['provider_status']=='RESOURCE_EXHAUSTED'
+    assert diagnostic['quota_metrics']==['generativelanguage.googleapis.com/generate_content_free_tier_requests']
+    assert diagnostic['quota_model']=='gemini-3.1-flash-lite' and diagnostic['retry_delay_seconds']==34
+    assert not diagnostic['automatic_retry'] and not diagnostic['account_tier_verified']
+    assert 'project' not in diagnostic and 'description' not in diagnostic
+
+
+@pytest.mark.parametrize('packet',[
+    None, [], {'error':[]}, {'error':{'status':{},'details':[None,[],{}]}},
+    {'error':{'status':'fabricated-private-key','message':'private','details':[
+        {'@type':'type.googleapis.com/google.rpc.ErrorInfo','reason':{}},
+        {'@type':'type.googleapis.com/google.rpc.ErrorInfo','reason':'fabricated-private-key'},
+        {'@type':'type.googleapis.com/google.rpc.BadRequest','fieldViolations':{}},
+        {'@type':'type.googleapis.com/google.rpc.QuotaFailure','violations':[{},None]},
+        {'@type':'type.googleapis.com/google.rpc.RetryInfo','retryDelay':'9000s'}]}},
+])
+def test_untrusted_error_details_have_bounded_allowlisted_output(packet):
+    from pdf_notion_mvp.provider_diagnostics import safe_error_diagnostic
+    response=httpx.Response(400,json=packet)
+    diagnostic=safe_error_diagnostic(response,expected_request({'units':[]}), 'fabricated-private-key','gemini-3.1-flash-lite')
+    assert diagnostic==dict(http_status=400,provider_status='unclassified',reasons=[],field_paths=[],quota_metrics=[],
+        automatic_retry=False,account_tier_verified=False,raw_error_body_saved=False)
+
+
+@pytest.mark.parametrize('body',[b'not JSON',b'\xff',b'x'*64001])
+def test_non_json_and_oversized_error_body_never_saved(body):
+    from pdf_notion_mvp.provider_diagnostics import safe_error_diagnostic
+    diagnostic=safe_error_diagnostic(httpx.Response(400,content=body),{},'fabricated-private-key','gemini-3.1-flash-lite')
+    assert diagnostic['provider_status']=='unclassified' and not diagnostic['raw_error_body_saved']
+
+
+def test_existing_error_receipt_without_ledger_is_preserved_before_key(inputs,tmp_path):
+    _,a=inputs;p=tmp_path/'results'/(operation_key(a.spec)+'-error.json')
+    p.parent.mkdir();p.write_text('preserve existing receipt');before=p.read_bytes()
+    with pytest.raises(ValueError,match='existing result without receipt'):
+        execute(a,a.plan_sha256,tmp_path/'ledger/budget.sqlite',tmp_path/'results',ROOT,
+            key_provider=lambda:pytest.fail('key read'),now=NOW)
+    assert p.read_bytes()==before
 
 
 def test_duplicate_id_offline_recovery_preserves_content_original_and_cost(inputs,tmp_path):
