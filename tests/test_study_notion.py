@@ -290,3 +290,14 @@ def test_corrupt_confirmed_checkpoint_cannot_acquire_an_unproven_page(planned,tm
     path.write_text(cp.model_copy(update={'status':'confirmed'}).model_dump_json());before=path.read_bytes()
     with pytest.raises(ValueError):save_study_checkpoint(path,cp.model_copy(update={'status':'confirmed','page_id':PAGE}))
     assert path.read_bytes()==before
+
+
+def test_candidate_proposal_uses_json_to_preserve_initial_indentation(planned):
+    files,hub,_,_,images=planned
+    candidate=next(c for c in files.review.corrections if c.status=='candidate')
+    candidate.proposed_text='    authored_indented_candidate()'
+    _,cp,imgs=prepare_study(files,'rag.control','체크포인트',HUB,hub,images)
+    tokens=canonical(cp.expected_content,imgs)
+    proposals=[t for t in tokens if t[0]=='literal_code' and t[2]=='json' and '\"proposed_text\": \"    authored_indented_candidate()\"' in t[3]]
+    assert proposals
+    assert confirm_study(fetched(cp,imgs),cp,imgs).status=='confirmed'

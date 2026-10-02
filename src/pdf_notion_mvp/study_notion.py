@@ -103,7 +103,7 @@ def render_study(bundle, images, key):
                 status = {'confirmed':'확정 교정','candidate':'교정 후보 · 본문 미적용'}[c['status']] if c else '교정 없음'
                 parts += [encode_text(f"{block['block_id']} · p{page} · {status}"), fence(entry['effective_text'])]
                 if c and c['status']=='candidate':
-                    parts.append(toggle('교정 후보 제안 · 본문 미적용',fence(c['proposed_text'])))
+                    parts.append(toggle('교정 후보 제안 · 본문 미적용',fence(json.dumps({'proposed_text':c['proposed_text']},ensure_ascii=False,indent=2),'json')))
             elif block['kind']!='image':
                 parts.append(toggle('원본 '+block['kind']+' · 의미 미검증',fence(json.dumps(block,ensure_ascii=False,indent=2),'json')))
         parts.append(toggle(f'p{page} 원본 전사·교정·블록·좌표 계보',fence(json.dumps(records,ensure_ascii=False,separators=(',',':')),'json')))
