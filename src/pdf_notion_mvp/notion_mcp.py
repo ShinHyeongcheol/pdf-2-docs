@@ -117,14 +117,14 @@ def fetch_body(packet: dict, binding: SectionPage) -> str:
     return body
 
 
-def parse_owned(body: str) -> dict[str, dict]:
+def parse_owned(body: str, *, marker=MARKER) -> dict[str, dict]:
     """Parse only our strict paragraph/toggle subset; unrelated page text is kept."""
     lines = body.splitlines()
     result = {}
     index = 0
     while index < len(lines):
         if lines[index].strip() != "<details>":
-            if MARKER in decode_text(lines[index]):
+            if marker in decode_text(lines[index]):
                 raise ValueError("ownership marker outside app toggle")
             index += 1
             continue
@@ -136,7 +136,7 @@ def parse_owned(body: str) -> dict[str, dict]:
             index += 1
             if depth == 0: break
         span = lines[start:index]
-        if MARKER not in decode_text("\n".join(span)):
+        if marker not in decode_text("\n".join(span)):
             continue
         if depth:
             raise ValueError("unclosed app toggle")
@@ -164,7 +164,7 @@ def parse_owned(body: str) -> dict[str, dict]:
             position += 1
             return toggle(title, children)
         block = parse_detail(0)
-        key = owned_key(block)
+        key = owned_key(block, marker=marker)
         if key is None or key in result or position != len(span):
             raise ValueError("duplicate or invalid app ownership")
         result[key] = block
