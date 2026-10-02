@@ -17,7 +17,7 @@ test('complete linked RPC returns result and persists raw responses', async () =
     assert.equal(JSON.parse(args.chars).id, 'request-1');
     if (++step === 1) return {session_id: 7, output: request('notion_update_page', {
       page_id: 'hub', command: 'insert_content', position: {type: 'end'}, content: 'reviewed literal', allow_async: false})};
-    return {exit_code: 0, output: JSON.stringify({type: 'result', result: {status: 'published_readback_verified'}}) + '\n'};
+    return {exit_code: 0, output: JSON.stringify({type: 'result', result: {status: 'published_readback_verified', actual_notion_appends: 1}}) + '\n'};
   };
   const actual = await runNotionBridge(options);
   assert.equal(actual.host_calls, 2); assert.equal(actual.host_writes, 1);
@@ -41,4 +41,30 @@ test('lost mutation response interrupts process and does not repeat dispatch', a
   options.writeStdin = async args => { assert.equal(args.chars, '\u0003'); interrupted++; };
   await assert.rejects(runNotionBridge(options), /unknown connector result/);
   assert.equal(writes, 1); assert.equal(interrupted, 1);
+});
+
+test('mixed append request and completion are rejected before mutation', async () => {
+  const options = config(); let writes = 0;
+  options.execCommand = async () => ({session_id: 7, output: request('notion_update_page', {
+    page_id: 'hub', command: 'insert_content', position: {type: 'end'}, content: 'reviewed literal', allow_async: false}) +
+    JSON.stringify({type: 'result', result: {status: 'unchanged', actual_notion_appends: 0}}) + '\n'});
+  options.notionUpdatePage = async () => { writes++; };
+  options.writeStdin = async args => { assert.equal(args.chars, '\u0003'); };
+  await assert.rejects(runNotionBridge(options), /Mixed or duplicate completion/);
+  assert.equal(writes, 0);
+});
+
+test('duplicate completion is rejected', async () => {
+  const options = config();
+  const done = JSON.stringify({type: 'result', result: {status: 'unchanged'}}) + '\n';
+  options.execCommand = async () => ({session_id: 7, output: done + done});
+  options.writeStdin = async args => { assert.equal(args.chars, '\u0003'); };
+  await assert.rejects(runNotionBridge(options), /Mixed or duplicate completion/);
+});
+
+test('completion count disagrees with dispatched write and is rejected', async () => {
+  const options = config();
+  options.execCommand = async () => ({exit_code: 0, output: JSON.stringify({type: 'result',
+    result: {status: 'published_readback_verified', actual_notion_appends: 1}}) + '\n'});
+  await assert.rejects(runNotionBridge(options), /disagrees with dispatched writes/);
 });

@@ -16,12 +16,16 @@ export async function runNotionBridge({execCommand, writeStdin, notionFetch,
         if (!raw.trim()) continue;
         const message = JSON.parse(raw.trim());
         if (message.type === 'blocked') throw new Error('CLI blocked publication');
-        if (message.type === 'result') { result = message.result; continue; }
+        if (message.type === 'result') {
+          if (request || result) throw new Error('Mixed or duplicate completion');
+          result = message.result; continue;
+        }
         if (message.type !== 'mcp_request' || request || result || !session)
           throw new Error('Unexpected host protocol');
         request = message;
       }
       if (request) {
+        if (buffer.trim()) throw new Error('Unexpected data after pending request');
         if (++sequence > pageIds.length + 3) throw new Error('Bounded host calls exceeded');
         const args = request.arguments;
         let packet;
@@ -42,6 +46,9 @@ export async function runNotionBridge({execCommand, writeStdin, notionFetch,
       }
       if (chunk.exit_code !== undefined) {
         if (chunk.exit_code !== 0 || !result || buffer.trim()) throw new Error('Incomplete CLI result');
+        if (result.actual_notion_appends !== writes ||
+          result.status !== (writes === 1 ? 'published_readback_verified' : 'unchanged'))
+          throw new Error('Completion disagrees with dispatched writes');
         return {result, host_calls: sequence, host_writes: writes};
       }
       chunk = await writeStdin({session_id: session, chars: '', yield_time_ms: 1000,
