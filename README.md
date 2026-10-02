@@ -142,4 +142,6 @@ PYTHONPATH=src .venv/bin/python -m uvicorn pdf_notion_mvp.api:create_demo_app \
 
 전체 문서의 외부 호출 없는 감사·검수 검색·페이지 체크포인트·PNG 도표 후보 계약은 [DOCUMENT_LOCAL.md](DOCUMENT_LOCAL.md)를 참고하세요.
 
+승인된 확정 설명 본문만 전송하는 별도 임베딩 실험·공유 비용 원장·중복 호출 방지 계약은 [EMBEDDING_VALIDATION.md](EMBEDDING_VALIDATION.md)를 참고하세요. 이 경계는 로컬 검색 순위를 저장하며 답변 생성과 게시를 실행하지 않습니다.
+
 예산 제한 전체 문서 생성·원응답 보존·무료 수정·독립 검토 후 렌더링은 [DOCUMENT_LESSONS.md](DOCUMENT_LESSONS.md)를 참고하세요. 요청 배치와 최종 주제별 교재 목차를 구분합니다.
