@@ -1,4 +1,5 @@
 import copy
+import base64
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
@@ -52,8 +53,13 @@ def factory(context,seen,violation=None):
         if violation=='timeout': raise httpx.ReadTimeout('fabricated-private-key',request=request)
         data=draft_for(context).model_dump(mode='json')
         if violation=='duplicate_ids': data['exercises'][0]['explanation']['claim_id']=data['topics'][0]['claims'][0]['claim_id']
-        if violation=='bounds': data['topics']=data['topics'][:2]
+        if violation=='bounds': data['topics']=[]
         if violation=='schema_error': return httpx.Response(400,json={'error':{'code':400,'status':'INVALID_ARGUMENT','message':'response schema exceeds complexity; fabricated-private-key'}})
+        if violation=='malformed': return httpx.Response(200,content=b'not valid JSON',headers={'content-type':'application/json'})
+        if violation in {'key_echo','escaped_key_echo'}:
+            text=json.dumps({'echo':'fabricated-private-key'})
+            if violation=='escaped_key_echo':text=text.replace('fabricated',r'\u0066abricated')
+            return httpx.Response(200,content=text.encode(),headers={'content-type':'application/json'})
         if violation=='citation': data['topics'][0]['claims'][0]['citations'][0]['quote']='없는 근거'
         return httpx.Response(200,json={'candidates':[{'content':{'role':'model','parts':[{'text':json.dumps(data,ensure_ascii=False)}]},'finishReason':'STOP'}],
             'usageMetadata':{'promptTokenCount':12,'candidatesTokenCount':120,'totalTokenCount':132}})
@@ -62,7 +68,7 @@ def factory(context,seen,violation=None):
         if violation=='request':
             def attack(r):
                 d=json.loads(r.content); d['contents'][0]['parts'][0]['text']+='unapproved'; r._content=json.dumps(d).encode()
-            args['event_hooks']={'request':[attack]+args['event_hooks']['request']}
+            args['event_hooks']['request']=[attack]+args['event_hooks']['request']
         kwargs['client_args']=args
         return ChatGoogleGenerativeAI(**kwargs)
     return build
@@ -286,8 +292,10 @@ def test_source_excluded_candidate_cannot_change_only_in_memory(inputs,tmp_path)
 def test_wire_schema_omits_only_metadata_and_bounds_and_local_validation_remains(inputs,tmp_path):
     _,a=inputs
     serialized=json.dumps(wire_schema())
-    for key in ['minLength','maxLength','minItems','maxItems']:
+    for key in ['minLength','maxLength']:
         assert '"'+key+'"' not in serialized
+    assert wire_schema()['properties']['topics']['minItems']==1
+    assert wire_schema()['properties']['topics']['maxItems']==6
     assert 'title' not in wire_schema()
     assert 'title' in wire_schema()['$defs']['Topic']['properties']
     assert wire_schema()['additionalProperties'] is False
@@ -296,6 +304,64 @@ def test_wire_schema_omits_only_metadata_and_bounds_and_local_validation_remains
     with pytest.raises(ValueError): run(tmp_path,a,[], 'bounds')
     db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
     assert db.execute('SELECT status,request_count,error_code FROM reservations').fetchone()==('failed',1,'ValidationError')
+    db.close()
+
+
+@pytest.mark.parametrize('count',[2,3])
+def test_source_grounded_topic_count_is_not_a_fixed_quota(inputs,tmp_path,count):
+    _,a=inputs;ctx=units_for(load_review_files(*[Path(p) for p in a.spec.input_paths],[],tmp_path/'unused.json'),a.spec.section_id,[])
+    draft=draft_for(ctx);draft.topics=draft.topics[:count]
+    assert verify_draft(ctx,draft)==[]
+
+
+def test_missing_evidence_and_duplicate_objectives_still_rejected(inputs,tmp_path):
+    _,a=inputs;ctx=units_for(load_review_files(*[Path(p) for p in a.spec.input_paths],[],tmp_path/'unused.json'),a.spec.section_id,[])
+    draft=draft_for(ctx);draft.topics=draft.topics[:2]
+    draft.topics[1].title=draft.topics[0].title
+    assert 'duplicate_topic' in verify_draft(ctx,draft)
+    draft.topics[0].claims[0].citations=[]
+    with pytest.raises(ValueError):verify_draft(ctx,draft)
+
+
+def test_invalid_response_is_saved_before_validation_and_never_retried(inputs,tmp_path):
+    _,a=inputs;seen=[]
+    with pytest.raises(ValueError):run(tmp_path,a,seen,'bounds')
+    db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
+    status,path,digest,count=db.execute('select status,result_path,result_sha,request_count from reservations').fetchone()
+    assert (status,count)==('failed',1)
+    saved=Path(path);original=saved.read_bytes();receipt=json.loads(original)
+    assert fingerprint(receipt)==digest and receipt['provider_packet']['candidates'][0]['finishReason']=='STOP'
+    assert json.loads(receipt['provider_packet']['candidates'][0]['content']['parts'][0]['text'])['topics']==[]
+    assert saved.stat().st_mode & 0o777==0o600 and b'fabricated-private-key' not in original
+    with pytest.raises(ValueError,match='consumed or ambiguous'):
+        execute(a,a.plan_sha256,tmp_path/'ledger/budget.sqlite',tmp_path/'results',ROOT,client_factory=lambda **kw:pytest.fail('retry'),key_provider=lambda:pytest.fail('second key'),now=NOW)
+    assert saved.read_bytes()==original and len(seen)==1
+    db.close()
+
+
+def test_even_malformed_http200_response_bytes_survive_sdk_failure(inputs,tmp_path):
+    _,a=inputs;seen=[]
+    with pytest.raises(Exception):run(tmp_path,a,seen,'malformed')
+    db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
+    status,path,digest,count=db.execute('select status,result_path,result_sha,request_count from reservations').fetchone()
+    receipt=json.loads(Path(path).read_text())
+    assert status=='failed' and count==len(seen)==1 and fingerprint(receipt)==digest
+    assert receipt['provider_packet'] is None
+    assert base64.b64decode(receipt['provider_body_base64'])==b'not valid JSON'
+    db.close()
+
+
+@pytest.mark.parametrize('violation',['key_echo','escaped_key_echo'])
+def test_provider_credential_echo_is_redacted_and_consumed(inputs,tmp_path,violation):
+    _,a=inputs;seen=[]
+    with pytest.raises(ValueError,match='credential-bearing'):run(tmp_path,a,seen,violation)
+    db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
+    status,path,digest,count=db.execute('select status,result_path,result_sha,request_count from reservations').fetchone()
+    receipt=json.loads(Path(path).read_text())
+    assert status=='failed' and count==len(seen)==1 and fingerprint(receipt)==digest
+    assert receipt['credential_redacted'] and receipt['provider_packet']['echo']=='[REDACTED_API_KEY]'
+    assert b'fabricated-private-key' not in Path(path).read_bytes()
+    assert b'fabricated-private-key' not in base64.b64decode(receipt['provider_body_base64'])
     db.close()
 
 

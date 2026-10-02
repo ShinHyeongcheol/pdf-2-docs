@@ -34,7 +34,7 @@ PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.lesson_generation --mode live 
 
 API 전송 전에 최종 HTTPS host/model path·전체 request digest·요청 크기·timeout을 확인합니다. 모델 호출은 source에 결합된 operation key로 영속 예약됩니다. 같은 작업의 완료 결과는 digest·현재 출처를 재검증하고 반환하며 키를 다시 읽지 않습니다. 실패·타임아웃·불확실 결과는 자동 재호출하지 않습니다. SDK usage token과 가격 기반 추정치, 보수적 누적 예약액, 관측 요청 수를 기록하고 실제 청구 확인은 false로 유지합니다.
 
-생성 내용은 3–6개 주제, 주제당 1–3개 설명, 3–5개 빈칸/짧은 답 문제입니다. 모든 설명과 해설의 인용은 제공한 단위의 정확한 부분 문자열이어야 하고, 정답은 문제 근거 인용의 일부여야 합니다. 출처 단위에는 버전·원본 블록 ID·페이지·좌표·교정 ID를 보존합니다. 이 검증은 의미·코드 실행의 정확성을 보장하지 않습니다.
+생성 내용은 근거 있는 학습 목표에 대응하는 1–6개 주제, 주제당 1–3개 설명, 3–5개 빈칸/짧은 답 문제입니다. 이전 구현의 최소 3개 주제는 짧은 절에도 동일한 개수를 강제하는 제약이었습니다. 짧은 자료의 센서 설정과 체크포인트처럼 두 목표로 구성할 수 있도록 고정 최소 개수를 제거했습니다. 빈 응답·빈 근거·중복 주제는 거부하며, 목표의 의미 있는 구분과 원문 핵심 범위의 충분한 설명은 독립 내용 검수에서 판단합니다. 주제를 억지로 나누거나 반복해 개수를 채우지 않습니다. 모든 설명과 해설의 인용은 제공한 단위의 정확한 부분 문자열이어야 하고, 정답은 문제 근거 인용의 일부여야 합니다. 출처 단위에는 버전·원본 블록 ID·페이지·좌표·교정 ID를 보존합니다. 이 검증은 의미·코드 실행의 정확성을 보장하지 않습니다.
 
 `ContentReview`에 결과 digest, 모든 설명·문제·해설 ID, 독립 대조자·판정·주의 사항을 기록한 뒤 `write_reading_bundle(..., budget_path=shared_ledger)`로 제작합니다. 원래 실행 원장과 현재 출처, 모든 ID를 확인하고 통과한 자료만 `index.html`·`lesson.json`·원본 확인용 `source.html`/`study.json`·원본 PNG·manifest로 만듭니다. 설명·문제는 HTML을 escape하고 외부 자원이나 스크립트를 사용하지 않습니다. 동일 자료 재제작은 파일과 수정 시간을 보존하고 수정·누락된 기존 결과는 덮어쓰지 않습니다.
 
@@ -46,12 +46,22 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_lesson_generation.py -q
 
 공개 테스트는 작성한 합성 fixture와 가짜 키/실제 SDK MockTransport만 사용합니다. 실제 입력·승인·키·생성 내용·검토·비용 원장은 공개 Git에 포함하지 않습니다.
 
-Provider requests use a compact JSON schema without schema metadata titles or length/count bounds.
-Full Pydantic length/count limits still apply after parsing, before any result can
+Provider requests omit metadata titles and string length bounds, while retaining
+array count bounds so the provider schema and local Pydantic contract agree.
+Full Pydantic limits still apply after parsing, before any result can
 be accepted. An allowlisted error category is retained for rejected requests;
 provider exception bodies and credential-bearing messages are never persisted.
 A failed operation stays consumed and costed. A changed, approved request is a
 new operator execution, not an automatic retry or a budget refund.
+
+HTTP 200 응답은 SDK의 JSON 파싱과 Pydantic 검증 전에 `OPERATION-provider.json`에
+0600 권한으로 배타 저장하고 지문을 비용 원장에 결합합니다. 실패 시에도
+원응답과 실패 receipt를 보존하므로 추가 API 호출 없이 원인과 원문 근거를
+검토할 수 있습니다. 기존 응답은 덮어쓰지 않으며, HTTP 오류 본문·요청 헤더·키는
+저장하지 않습니다. 원응답의 보존은 생성 내용의 승인이나 자동 재시도를 뜻하지 않습니다.
+HTTP 200 본문이 선택된 키를 되돌려 보내는 경우에는 JSON escape도 확인해
+키를 삭제한 안전 사본만 보존하고 해당 요청을 소비된 실패로 처리합니다.
+키가 포함된 원문이나 base64 사본은 보존하지 않습니다.
 
 
 `recover_positional_ids(result_path, budget_path=shared_ledger)`는 인용·정답 등
