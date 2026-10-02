@@ -63,6 +63,15 @@ HTTP 200 본문이 선택된 키를 되돌려 보내는 경우에는 JSON escape
 키를 삭제한 안전 사본만 보존하고 해당 요청을 소비된 실패로 처리합니다.
 키가 포함된 원문이나 base64 사본은 보존하지 않습니다.
 
+HTTP 오류 응답은 원문 대신 `OPERATION-error.json`에 HTTP 상태, 허용된 Google
+오류 상태·ErrorInfo 사유, 승인 요청에 있는 필드 식별자, 알려진 quota metric과
+짧은 retry delay만 기록합니다. 메시지·설명·임의 metadata·프로젝트 ID·헤더는
+저장하지 않습니다. 이 파일도 0600·배타 저장·원장 지문 결합을 사용하고 실패는
+소비된 상태와 기존 비용 예약을 유지합니다. retry delay를 기록해도 자동 재시도는
+하지 않습니다. free-tier quota metric이 관측되어도 계정의 무료 등급이나 무료
+한도 소진을 확정하지 않습니다. 계정 등급은 별도로 확인해야 합니다.
+이 기록이 없던 과거 HTTP 400의 상세 원인은 소급 복원할 수 없습니다.
+
 
 `recover_positional_ids(result_path, budget_path=shared_ledger)`는 인용·정답 등
 검증은 통과했지만 설명 ID만 중복된 저장 결과에 한해 API 없이 복구합니다.
