@@ -46,9 +46,17 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_lesson_generation.py -q
 
 공개 테스트는 작성한 합성 fixture와 가짜 키/실제 SDK MockTransport만 사용합니다. 실제 입력·승인·키·생성 내용·검토·비용 원장은 공개 Git에 포함하지 않습니다.
 
-Provider requests use a compact JSON schema without titles or length/count bounds.
+Provider requests use a compact JSON schema without schema metadata titles or length/count bounds.
 Full Pydantic length/count limits still apply after parsing, before any result can
 be accepted. An allowlisted error category is retained for rejected requests;
 provider exception bodies and credential-bearing messages are never persisted.
 A failed operation stays consumed and costed. A changed, approved request is a
 new operator execution, not an automatic retry or a budget refund.
+
+
+`recover_positional_ids(result_path, budget_path=shared_ledger)`는 인용·정답 등
+검증은 통과했지만 설명 ID만 중복된 저장 결과에 한해 API 없이 복구합니다.
+원래 실패 파일을 보존하고 원장 digest/요청 1회를 확인한 뒤 위치 기반 ID만
+변경한 별도 파일과 before/after 이력을 저장합니다. 텍스트·인용은 바꾸지 않고,
+다른 검증 실패·출처 변경·원장 불일치는 거부합니다. 비용 예약은 유지하며
+복구된 결과도 완전한 독립 내용 대조를 거쳐야 읽기 묶음을 만들 수 있습니다.

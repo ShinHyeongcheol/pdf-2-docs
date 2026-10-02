@@ -11,7 +11,7 @@ import pytest
 
 from pdf_notion_mvp.lesson_generation import (COST_MICRO_USD,ContentReview,LessonDraft,
     create_proposal,execute,expected_request,fingerprint,operation_key,units_for,verify_draft,
-    write_reading_bundle,_budget_connection,seed_previous_run,wire_schema,safe_error_code)
+    write_reading_bundle,_budget_connection,seed_previous_run,wire_schema,safe_error_code,recover_positional_ids)
 from pdf_notion_mvp.live_run import CompletedRunReceipt
 from pdf_notion_mvp.rag_files import load_review_files
 
@@ -51,6 +51,7 @@ def factory(context,seen,violation=None):
         seen.append(request)
         if violation=='timeout': raise httpx.ReadTimeout('fabricated-private-key',request=request)
         data=draft_for(context).model_dump(mode='json')
+        if violation=='duplicate_ids': data['exercises'][0]['explanation']['claim_id']=data['topics'][0]['claims'][0]['claim_id']
         if violation=='bounds': data['topics']=data['topics'][:2]
         if violation=='schema_error': return httpx.Response(400,json={'error':{'code':400,'status':'INVALID_ARGUMENT','message':'response schema exceeds complexity; fabricated-private-key'}})
         if violation=='citation': data['topics'][0]['claims'][0]['citations'][0]['quote']='없는 근거'
@@ -306,3 +307,45 @@ def test_sdk_schema_rejection_records_only_allowlisted_diagnostic(inputs,tmp_pat
     db.close()
     assert b'fabricated-private-key' not in (tmp_path/'ledger/budget.sqlite').read_bytes()
     assert safe_error_code(type('ProviderSecretClass', (Exception,), {})('private'))=='OtherError'
+
+
+def test_duplicate_id_offline_recovery_preserves_content_original_and_cost(inputs,tmp_path):
+    _,a=inputs; seen=[]
+    original,_=run(tmp_path,a,seen,'duplicate_ids')
+    assert original['errors']==['duplicate_claim_id']
+    source=tmp_path/'results'/(operation_key(a.spec)+'.json'); before=source.read_bytes()
+    ledger=tmp_path/'ledger/budget.sqlite'
+    recovered,status=recover_positional_ids(source,budget_path=ledger)
+    assert status=='written' and recovered['status']=='ready_for_content_review' and not recovered['errors']
+    assert source.read_bytes()==before and len(seen)==1
+    for old,new in zip(original['draft']['topics'],recovered['draft']['topics']):
+        assert old['title']==new['title']
+        for a,b in zip(old['claims'],new['claims']):
+            assert {k:v for k,v in a.items() if k!='claim_id'}=={k:v for k,v in b.items() if k!='claim_id'}
+    for old,new in zip(original['draft']['exercises'],recovered['draft']['exercises']):
+        assert {k:v for k,v in old.items() if k not in ['question_id','explanation']}=={k:v for k,v in new.items() if k not in ['question_id','explanation']}
+        assert old['explanation']['text']==new['explanation']['text'] and old['explanation']['citations']==new['explanation']['citations']
+    assert recover_positional_ids(source,budget_path=ledger)==(recovered,'unchanged')
+    db=sqlite3.connect(ledger)
+    assert db.execute('SELECT status,request_count,cost FROM reservations').fetchone()==('completed',1,COST_MICRO_USD)
+    db.close()
+    target=source.with_name(original['operation_key']+'-ids.json');target.write_bytes(target.read_bytes()+b' ')
+    # Whitespace is harmless JSON; changing actual data must be rejected.
+    changed=json.loads(target.read_text());changed['draft']['topics'][0]['title']='changed';target.write_text(json.dumps(changed))
+    with pytest.raises(ValueError,match='changed'):recover_positional_ids(source,budget_path=ledger)
+
+
+def test_recovery_rejects_other_failure_without_writing(inputs,tmp_path):
+    _,a=inputs;original,_=run(tmp_path,a,[],'citation')
+    source=tmp_path/'results'/(operation_key(a.spec)+'.json');ledger=tmp_path/'ledger/budget.sqlite'
+    before=source.read_bytes()
+    with pytest.raises(ValueError,match='only duplicate'):recover_positional_ids(source,budget_path=ledger)
+    assert source.read_bytes()==before and not source.with_name(original['operation_key']+'-ids.json').exists()
+
+
+def test_id_recovery_does_not_trust_claimed_error_list(inputs,tmp_path):
+    _,a=inputs;original,_=run(tmp_path,a,[],'duplicate_ids')
+    source=tmp_path/'results'/(operation_key(a.spec)+'.json');ledger=tmp_path/'ledger/budget.sqlite'
+    original['draft']['topics'][0]['claims'][0]['citations'][0]['quote']='unsupported'
+    source.write_text(json.dumps(original))
+    with pytest.raises(ValueError,match='otherwise valid'):recover_positional_ids(source,budget_path=ledger)
