@@ -120,7 +120,7 @@ def test_parallel_operation_reserves_once(approval):
 
 def test_saved_receipt_tampering_blocks_reuse(approval):
     seen=[];run(approval,seen)
-    path=next(Path(approval.spec.output_dir).glob('*.json'));data=json.loads(path.read_text());data['draft']['pages'][0]['notes'][0]['text']='changed';path.write_text(json.dumps(data))
+    path=next(p for p in Path(approval.spec.output_dir).glob('*.json') if not p.name.endswith('-provider.json'));data=json.loads(path.read_text());data['draft']['pages'][0]['notes'][0]['text']='changed';path.write_text(json.dumps(data))
     with pytest.raises(ValueError,match='changed'):execute(approval,approval.plan_sha256,key_provider=lambda:pytest.fail('key'),now=NOW)
 
 
@@ -171,7 +171,7 @@ def test_offline_whole_unit_exercise_removal_preserves_original_cost_and_notes(a
         return httpx.Client(transport=httpx.MockTransport(respond),**kw)
     result,_=execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)
     assert result['status']=='failed_content_validation'
-    source=next(Path(approval.spec.output_dir).glob('*.json'));before=source.read_bytes()
+    source=next(p for p in Path(approval.spec.output_dir).glob('*.json') if not p.name.endswith('-provider.json'));before=source.read_bytes()
     # The fixture's quiz unit is its title (first source unit).
     fixed,status=recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
     assert status=='written' and fixed['draft']['pages'][0]['notes']==result['draft']['pages'][0]['notes']
@@ -182,7 +182,7 @@ def test_offline_whole_unit_exercise_removal_preserves_original_cost_and_notes(a
 
 
 def test_offline_recovery_rejects_other_source_failures(approval):
-    result,_=run(approval,[],'source');source=next(Path(approval.spec.output_dir).glob('*.json'))
+    result,_=run(approval,[],'source');source=next(p for p in Path(approval.spec.output_dir).glob('*.json') if not p.name.endswith('-provider.json'))
     with pytest.raises(ValueError):recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
     assert not list(source.parent.glob('*filtered.json'))
 
@@ -195,6 +195,27 @@ def test_recovery_cannot_hide_blank_explanation_in_removed_exercise(approval):
             return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':json.dumps(data)}]},'finishReason':'STOP'}]})
         return httpx.Client(transport=httpx.MockTransport(respond),**kw)
     execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)
-    source=next(Path(approval.spec.output_dir).glob('*.json'));before=source.read_bytes()
+    source=next(p for p in Path(approval.spec.output_dir).glob('*.json') if not p.name.endswith('-provider.json'));before=source.read_bytes()
     with pytest.raises(ValueError):recover_whole_unit_exercises(source,budget_path=approval.spec.budget_ledger)
     assert source.read_bytes()==before and not list(source.parent.glob('*filtered.json'))
+
+
+def test_unvalidated_provider_packet_preserved_on_schema_error(approval):
+    _,context,_=validate_approval(approval,approval.plan_sha256,NOW)
+    def build(**kw):
+        def respond(request):
+            data=draft(context);data['pages'][0]['notes']*=4
+            return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':json.dumps(data)}]},'finishReason':'STOP'}]})
+        return httpx.Client(transport=httpx.MockTransport(respond),**kw)
+    with pytest.raises(ValueError):execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)
+    path=next(Path(approval.spec.output_dir).glob('*-provider.json'));receipt=json.loads(path.read_text())
+    assert receipt['status']=='observed_unvalidated_response' and receipt['request_count']==1
+    assert json.loads(receipt['provider_packet']['candidates'][0]['content']['parts'][0]['text'])['pages'][0]['notes']
+    with sqlite3.connect(approval.spec.budget_ledger) as db:assert db.execute('SELECT status,result_path,result_sha,request_count FROM reservations').fetchone()==('failed',str(path),fingerprint(receipt),1)
+    with pytest.raises(ValueError,match='consumed'):execute(approval,approval.plan_sha256,key_provider=lambda:pytest.fail('retry'),now=NOW)
+
+
+def test_wire_array_bounds_remain_for_provider_generation():
+    schema=wire_schema();assert schema['properties']['pages']['maxItems']==8
+    assert schema['$defs']['PageLesson']['properties']['notes']['maxItems']==3
+    assert schema['$defs']['PageLesson']['properties']['exercises']['maxItems']==1

@@ -141,7 +141,7 @@ def wire_schema():
     def trim(value):
         if isinstance(value,dict):
             return {k:({n:trim(s) for n,s in v.items()} if k in {'properties','$defs'} else trim(v))
-                    for k,v in value.items() if k not in {'title','minLength','maxLength','minItems','maxItems'}}
+                    for k,v in value.items() if k not in {'title','minLength','maxLength'}}
         if isinstance(value,list):return [trim(v) for v in value]
         return value
     return trim(BatchDraft.model_json_schema())
@@ -223,7 +223,8 @@ def execute(approval,expected_sha,*,client_factory=None,key_provider=None,now=No
     def connect():
         ledger_check();db=_budget_connection(ledger);ledger_check();return db
     op='document:'+fingerprint([s.input_sha256,s.context_digest,s.request_digest]);result_path=root/(op.split(':')[1]+'.json')
-    _regular(result_path);db=connect();reserved=False;requests=0
+    provider_path=root/(op.split(':')[1]+'-provider.json')
+    _regular(result_path);_regular(provider_path);db=connect();reserved=False;requests=0
     try:
         db.execute('BEGIN IMMEDIATE');ledger_check()
         row=db.execute('SELECT status,result_path,result_sha FROM reservations WHERE operation=?',(op,)).fetchone()
@@ -236,7 +237,7 @@ def execute(approval,expected_sha,*,client_factory=None,key_provider=None,now=No
             verify_draft(context,BatchDraft.model_validate(raw['draft']));return raw,'unchanged'
         total=db.execute('SELECT coalesce(sum(cost),0) FROM reservations').fetchone()[0]
         if total+COST_MICRO_USD>BUDGET_MICRO_USD:raise ValueError('cumulative cost budget exhausted')
-        if result_path.exists():raise ValueError('existing result without receipt; preserve it')
+        if result_path.exists() or provider_path.exists():raise ValueError('existing result without receipt; preserve it')
         db.execute('INSERT INTO reservations(operation,run_id,cost,status) VALUES(?,?,?,?)',(op,s.run_id,COST_MICRO_USD,'reserved'))
         db.execute('COMMIT');reserved=True
         key=key_provider() if key_provider else selected_key('GEMINI_API_KEY',Path(s.key_project_root))
@@ -261,6 +262,13 @@ def execute(approval,expected_sha,*,client_factory=None,key_provider=None,now=No
             if response.status_code!=200:raise ValueError('provider rejected request')
             if len(response.content)>2000000:raise ValueError('response size exceeded')
             packet=response.json()
+        ledger_check();root.mkdir(parents=True,exist_ok=True);_regular(provider_path)
+        provider_receipt=dict(status='observed_unvalidated_response',operation_key=op,context=context,
+            input_paths=s.input_paths,input_sha256=s.input_sha256,context_digest=s.context_digest,
+            request_digest=s.request_digest,request_count=requests,provider_packet=packet)
+        with provider_path.open('x',encoding='utf-8') as f:
+            f.write(json.dumps(provider_receipt,ensure_ascii=False,indent=2)+'\n');f.flush();os.fsync(f.fileno())
+        db.execute('UPDATE reservations SET result_path=?,result_sha=? WHERE operation=?',(str(provider_path),fingerprint(provider_receipt),op))
         candidates=packet.get('candidates',[])
         if len(candidates)!=1 or candidates[0].get('finishReason')!='STOP':raise ValueError('incomplete model response')
         parts=candidates[0].get('content',{}).get('parts',[])
