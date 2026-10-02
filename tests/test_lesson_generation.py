@@ -11,7 +11,7 @@ import pytest
 
 from pdf_notion_mvp.lesson_generation import (COST_MICRO_USD,ContentReview,LessonDraft,
     create_proposal,execute,expected_request,fingerprint,operation_key,units_for,verify_draft,
-    write_reading_bundle,_budget_connection,seed_previous_run)
+    write_reading_bundle,_budget_connection,seed_previous_run,wire_schema,safe_error_code)
 from pdf_notion_mvp.live_run import CompletedRunReceipt
 from pdf_notion_mvp.rag_files import load_review_files
 
@@ -51,6 +51,8 @@ def factory(context,seen,violation=None):
         seen.append(request)
         if violation=='timeout': raise httpx.ReadTimeout('fabricated-private-key',request=request)
         data=draft_for(context).model_dump(mode='json')
+        if violation=='bounds': data['topics']=data['topics'][:2]
+        if violation=='schema_error': return httpx.Response(400,json={'error':{'code':400,'status':'INVALID_ARGUMENT','message':'response schema exceeds complexity; fabricated-private-key'}})
         if violation=='citation': data['topics'][0]['claims'][0]['citations'][0]['quote']='없는 근거'
         return httpx.Response(200,json={'candidates':[{'content':{'role':'model','parts':[{'text':json.dumps(data,ensure_ascii=False)}]},'finishReason':'STOP'}],
             'usageMetadata':{'promptTokenCount':12,'candidatesTokenCount':120,'totalTokenCount':132}})
@@ -278,3 +280,29 @@ def test_source_excluded_candidate_cannot_change_only_in_memory(inputs,tmp_path)
     assert fingerprint(units_for(files,'unit.part',[]))==result['context_digest']
     with pytest.raises(ValueError,match='authoritative input'):
         write_reading_bundle(result_path,rp,files,'unit.part','체크포인트',tmp_path/'reading',budget_path=tmp_path/'ledger/budget.sqlite')
+
+
+def test_wire_schema_omits_only_metadata_and_bounds_and_local_validation_remains(inputs,tmp_path):
+    _,a=inputs
+    serialized=json.dumps(wire_schema())
+    for key in ['minLength','maxLength','minItems','maxItems']:
+        assert '"'+key+'"' not in serialized
+    assert 'title' not in wire_schema()
+    assert 'title' in wire_schema()['$defs']['Topic']['properties']
+    assert wire_schema()['additionalProperties'] is False
+    assert wire_schema()['required']==['topics','exercises']
+    assert wire_schema()['$defs']['Exercise']['properties']['kind']['enum']==['short_answer','cloze']
+    with pytest.raises(ValueError): run(tmp_path,a,[], 'bounds')
+    db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
+    assert db.execute('SELECT status,request_count,error_code FROM reservations').fetchone()==('failed',1,'ValidationError')
+    db.close()
+
+
+def test_sdk_schema_rejection_records_only_allowlisted_diagnostic(inputs,tmp_path):
+    _,a=inputs; seen=[]
+    with pytest.raises(Exception): run(tmp_path,a,seen,'schema_error')
+    db=sqlite3.connect(tmp_path/'ledger/budget.sqlite')
+    assert db.execute('SELECT status,request_count,error_code FROM reservations').fetchone()==('failed',1,'GoogleInvalidRequestError:schema')
+    db.close()
+    assert b'fabricated-private-key' not in (tmp_path/'ledger/budget.sqlite').read_bytes()
+    assert safe_error_code(type('ProviderSecretClass', (Exception,), {})('private'))=='OtherError'

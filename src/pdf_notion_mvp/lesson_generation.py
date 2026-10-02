@@ -140,12 +140,40 @@ def messages(context):
     return [SystemMessage(content=PROMPT), HumanMessage(content=json.dumps({'untrusted_evidence':context},ensure_ascii=False))]
 
 
+def wire_schema():
+    """Small provider schema; strict bounds remain in local LessonDraft validation."""
+    def trim(value):
+        if isinstance(value, dict):
+            return {k:({name:trim(schema) for name,schema in v.items()}
+                       if k in {'properties','$defs'} else trim(v)) for k,v in value.items()
+                    if k not in {'title','minLength','maxLength','minItems','maxItems'}}
+        if isinstance(value, list): return [trim(v) for v in value]
+        return value
+    return trim(LessonDraft.model_json_schema())
+
+
+def safe_error_code(exc):
+    """Persist only an allowlisted classification, never a provider error body."""
+    names={'GoogleInvalidRequestError','GoogleAuthenticationError','GooglePermissionDeniedError',
+           'GoogleModelNotFoundError','GoogleRateLimitError','GoogleAPIError','ReadTimeout',
+           'ConnectTimeout','ValueError','ValidationError','KeyboardInterrupt'}
+    name=type(exc).__name__
+    name=name if name in names else 'OtherError'
+    if name=='GoogleInvalidRequestError':
+        message=str(exc).casefold()  # Inspect in memory; do not log or persist this text.
+        if 'schema' in message: return name+':schema'
+        if 'token' in message: return name+':token_limit'
+        if 'billing' in message: return name+':billing'
+        if 'invalid_argument' in message: return name+':invalid_argument'
+    return name
+
+
 def expected_request(context):
     msgs = messages(context)
     return {'contents':[{'parts':[{'text':msgs[1].content}],'role':'user'}],
             'systemInstruction':{'parts':[{'text':msgs[0].content}]}, 'safetySettings':[],
             'generationConfig':{'candidateCount':1,'maxOutputTokens':8192,
-                                'responseMimeType':'application/json','responseJsonSchema':LessonDraft.model_json_schema()}}
+                                'responseMimeType':'application/json','responseJsonSchema':wire_schema()}}
 
 
 def verify_draft(context, draft):
@@ -332,7 +360,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             max_output_tokens=8192,client_args={'trust_env':False,'event_hooks':{'request':[guard]}})
         try:
             with tracing_context(enabled=False):
-                packet=client.with_structured_output(LessonDraft,method='json_schema',include_raw=True).invoke(messages(context))
+                packet=client.with_structured_output(wire_schema(),method='json_schema',include_raw=True).invoke(messages(context))
         finally:
             sdk=getattr(client,'client',None)
             if sdk is not None: sdk.close()
@@ -359,7 +387,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
         return result,'written'
     except BaseException as exc:
         if db.in_transaction: db.execute('ROLLBACK')
-        if reserved: db.execute('UPDATE reservations SET status=?,request_count=?,error_code=? WHERE operation=?',('failed',requests,type(exc).__name__,op))
+        if reserved: db.execute('UPDATE reservations SET status=?,request_count=?,error_code=? WHERE operation=?',('failed',requests,safe_error_code(exc),op))
         raise
     finally: db.close()
 

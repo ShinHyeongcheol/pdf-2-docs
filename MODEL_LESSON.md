@@ -45,3 +45,10 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_lesson_generation.py -q
 ```
 
 공개 테스트는 작성한 합성 fixture와 가짜 키/실제 SDK MockTransport만 사용합니다. 실제 입력·승인·키·생성 내용·검토·비용 원장은 공개 Git에 포함하지 않습니다.
+
+Provider requests use a compact JSON schema without titles or length/count bounds.
+Full Pydantic length/count limits still apply after parsing, before any result can
+be accepted. An allowlisted error category is retained for rejected requests;
+provider exception bodies and credential-bearing messages are never persisted.
+A failed operation stays consumed and costed. A changed, approved request is a
+new operator execution, not an automatic retry or a budget refund.
