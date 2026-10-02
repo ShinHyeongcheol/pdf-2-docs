@@ -145,7 +145,7 @@ def _render_verified_plan(source, result, binding, context, *, provider="mock", 
         source_digest=context.source_digest, evidence_digest=result.evidence_digest, operations=operations)
 
 
-def owned_key(block: dict) -> str | None:
+def owned_key(block: dict, *, marker=MARKER) -> str | None:
     if block.get("type") != "toggle":
         return None
     markers = []
@@ -155,8 +155,8 @@ def owned_key(block: dict) -> str | None:
         for p in child.get("toggle", {}).get("children", []):
             if p.get("type") == "paragraph":
                 text = "".join(r.get("text", {}).get("content", "") for r in p.get("paragraph", {}).get("rich_text", []))
-                if text.startswith(MARKER):
-                    markers.append(text[len(MARKER):])
+                if text.startswith(marker):
+                    markers.append(text[len(marker):])
     if not markers:
         return None
     if len(markers) != 1 or len(markers[0]) != 64 or any(c not in "0123456789abcdef" for c in markers[0]):
