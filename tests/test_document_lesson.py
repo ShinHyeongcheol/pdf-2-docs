@@ -219,3 +219,13 @@ def test_wire_schema_keeps_local_bounds_without_provider_complexity():
     schema=wire_schema();assert 'maxItems' not in schema['properties']['pages']
     assert 'title' in schema['$defs']['PageLesson']['properties']
     with pytest.raises(ValueError):BatchDraft.model_validate({'pages':[],'diagrams':[]})
+
+@pytest.mark.parametrize('body',[{'error':{'status':'INVALID_ARGUMENT','message':'schema fabricated-private-key'}},{'error':{'status':'fabricated-private-key','message':'other fabricated-private-key'}}])
+def test_http_failure_classification_never_saves_body_or_unknown_status(approval,body):
+    def build(**kw):return httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(400,json=body)),**kw)
+    with pytest.raises(ValueError):execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)
+    p=next(Path(approval.spec.output_dir).glob('*-http-failure.json'));value=json.loads(p.read_text())
+    assert value['http_status']==400 and value['request_count']==1 and not value['automatic_retry']
+    assert 'fabricated-private-key' not in p.read_text()
+    if body['error']['status']=='INVALID_ARGUMENT':assert value['classification']=='schema' and value['provider_error_status']=='INVALID_ARGUMENT'
+    else:assert value['classification']=='unclassified' and 'provider_error_status' not in value
