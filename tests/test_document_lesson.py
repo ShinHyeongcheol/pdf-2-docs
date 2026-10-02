@@ -220,7 +220,7 @@ def test_wire_schema_keeps_local_bounds_without_provider_complexity():
     assert 'title' in schema['$defs']['PageLesson']['properties']
     with pytest.raises(ValueError):BatchDraft.model_validate({'pages':[],'diagrams':[]})
 
-@pytest.mark.parametrize('body',[{'error':{'status':'INVALID_ARGUMENT','message':'schema fabricated-private-key'}},{'error':{'status':'fabricated-private-key','message':'other fabricated-private-key'}}])
+@pytest.mark.parametrize('body',[{'error':{'status':'INVALID_ARGUMENT','message':'schema fabricated-private-key'}},{'error':{'status':'fabricated-private-key','message':'other fabricated-private-key'}},{'error':{'status':[],'message':'other'}},{'error':{'status':{},'message':'other'}}])
 def test_http_failure_classification_never_saves_body_or_unknown_status(approval,body):
     def build(**kw):return httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(400,json=body)),**kw)
     with pytest.raises(ValueError):execute(approval,approval.plan_sha256,client_factory=build,key_provider=lambda:'fabricated-key',now=NOW)

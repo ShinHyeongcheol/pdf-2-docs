@@ -265,7 +265,7 @@ def execute(approval,expected_sha,*,client_factory=None,key_provider=None,now=No
                 summary=dict(http_status=response.status_code,request_count=requests,automatic_retry=False)
                 try:
                     error=response.json().get('error',{});name=error.get('status')
-                    if name in {'INVALID_ARGUMENT','RESOURCE_EXHAUSTED','PERMISSION_DENIED','UNAUTHENTICATED','NOT_FOUND','INTERNAL','UNAVAILABLE'}:summary['provider_error_status']=name
+                    if isinstance(name,str) and name in {'INVALID_ARGUMENT','RESOURCE_EXHAUSTED','PERMISSION_DENIED','UNAUTHENTICATED','NOT_FOUND','INTERNAL','UNAVAILABLE'}:summary['provider_error_status']=name
                     message=str(error.get('message','')).casefold()
                     summary['classification']='schema' if 'schema' in message else 'quota' if 'quota' in message else 'billing' if 'billing' in message else 'unclassified'
                 except (ValueError,AttributeError):pass
