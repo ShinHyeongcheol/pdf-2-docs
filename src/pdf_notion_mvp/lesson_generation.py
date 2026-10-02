@@ -118,13 +118,18 @@ def units_for(files, section_id, exclude_pages):
     def refs(ids):
         return [dict(block_id=i, source=blocks[i].source.model_dump(mode='json'),
                      correction_id=corrections[i].correction_id if i in corrections else None) for i in ids]
-    units = [dict(unit_id=e.block_id, text=e.text, sources=refs([e.block_id]))
+    units = [dict(unit_id='block:'+e.block_id, text=e.text, sources=refs([e.block_id]))
              for e in context.evidence if e.block_id not in fragment_ids and e.page not in exclude_pages]
     # Only reviewed table relationships; code/candidate fragments never become lesson evidence.
+    eligible_ids={e.block_id for e in context.evidence}
+    forbidden_ids={i for f in fragments if f.kind=='code' or f.status=='candidate' for i in f.source_block_ids}
     for f in fragments:
         if (f.kind == 'table' and f.status == 'confirmed' and
                 not any(blocks[i].source.page in exclude_pages for i in f.source_block_ids)):
+            if not set(f.source_block_ids)<=eligible_ids or set(f.source_block_ids)&forbidden_ids:
+                raise ValueError('table evidence must use confirmed body text without code/candidate overlap')
             units.append(dict(unit_id='fragment:'+f.fragment_id, text=f.text, sources=refs(f.source_block_ids)))
+    if len({u['unit_id'] for u in units})!=len(units): raise ValueError('evidence unit IDs must be unique')
     if not units or len(units)>200 or len(encode(units))>75000:
         raise ValueError('bounded confirmed text context required')
     return dict(document_id=context.document_id, version=context.version, section_id=section_id,
@@ -263,7 +268,7 @@ def seed_previous_run(path, receipt_path):
     db=_budget_connection(path)
     try:
         db.execute('BEGIN IMMEDIATE')
-        db.execute('INSERT OR IGNORE INTO reservations(operation,run_id,cost,status,result_path,result_sha) VALUES(?,?,?,?,?,?)',('legacy:'+str(r.run_id),str(r.run_id),COST_MICRO_USD,'completed',None,r.completion_sha256))
+        db.execute('INSERT OR IGNORE INTO reservations(operation,run_id,cost,status,result_path,result_sha,request_count) VALUES(?,?,?,?,?,?,?)',('legacy:'+str(r.run_id),str(r.run_id),COST_MICRO_USD,'completed',None,r.completion_sha256,r.request_count))
         if db.execute('SELECT sum(cost) FROM reservations').fetchone()[0]>BUDGET_MICRO_USD: raise ValueError('budget exceeded')
         db.execute('COMMIT')
     except BaseException:
@@ -413,6 +418,11 @@ def write_reading_bundle(result_path,review_path,files,section,question,output_d
     review=ContentReview.model_validate(read_json_input(Path(review_path),max_bytes=100000))
     # Context is authoritative only after independently re-preparing the exact approved units.
     pages=result['excluded_pages'] if 'excluded_pages' in result else []
+    inputs=[Path(p) for p in result['input_paths']]
+    authoritative=load_review_files(*inputs,[],Path(output_dir)/'unused-lesson-result.json')
+    if any(getattr(files,k).model_dump_json()!=getattr(authoritative,k).model_dump_json() for k in ['source','hierarchy','review']) or files.asset_root!=authoritative.asset_root or files.bindings:
+        raise ValueError('supplied source/review differs from authoritative input files')
+    files=authoritative
     context=units_for(files,section,pages)
     if fingerprint(context)!=result['context_digest'] or context!=result['context']:
         raise ValueError('current source context differs')

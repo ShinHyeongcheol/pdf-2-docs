@@ -126,7 +126,7 @@ def test_budget_exhaustion_and_legacy_seed(inputs,tmp_path):
     ledger=tmp_path/'ledger/budget.sqlite'
     seed_previous_run(ledger,p); seed_previous_run(ledger,p)
     db=_budget_connection(ledger)
-    assert db.execute('SELECT sum(cost) FROM reservations').fetchone()[0]==COST_MICRO_USD
+    assert db.execute('SELECT sum(cost),sum(request_count) FROM reservations').fetchone()==(COST_MICRO_USD,1)
     db.execute('INSERT INTO reservations(operation,run_id,cost,status) VALUES(?,?,?,?)',('other','other',10000000-COST_MICRO_USD,'reserved'))
     db.close()
     with pytest.raises(ValueError,match='budget'):
@@ -234,3 +234,43 @@ def test_incomplete_json_one_attempt_and_cli_secret_redaction(inputs,tmp_path,ca
         module.main(['--source',str(paths[0]),'--outline',str(paths[1]),'--review',str(paths[2]),'--section','unit.part',
                     '--output-dir',str(tmp_path/'results'),'--budget-ledger',str(tmp_path/'ledger/budget.sqlite'),'--key-project-root',str(ROOT)])
     assert e.value.code==1 and 'fabricated-private-key' not in capsys.readouterr().err
+
+
+def test_table_label_cannot_export_code_lineage(inputs,tmp_path):
+    paths,_=inputs
+    review=json.loads(paths[2].read_text())
+    review['fragments'].append(dict(fragment_id='disguised-code',section_id='unit.part',source_block_ids=['b4'],
+        kind='table',text='def double(value): return value * 2',status='confirmed',basis='adversarial authored fixture',correction_ids=[]))
+    paths[2].write_text(json.dumps(review))
+    with pytest.raises(ValueError,match='table evidence'):
+        units_for(load_review_files(*paths,[],tmp_path/'unused.json'),'unit.part',[])
+
+
+def test_block_and_fragment_namespaces_preserve_both_units(inputs,tmp_path):
+    from pdf_notion_mvp.contracts import FixtureInput
+    from pdf_notion_mvp.review import document_digest
+    paths,_=inputs
+    source,outline,review=[json.loads(p.read_text()) for p in paths]
+    next(b for b in source['document']['blocks'] if b['block_id']=='b7')['block_id']='fragment:collision'
+    for n in outline['nodes']: n['block_ids']=['fragment:collision' if i=='b7' else i for i in n['block_ids']]
+    review['source_digest']=document_digest(FixtureInput.model_validate(source).document)
+    review['fragments'].append(dict(fragment_id='collision',section_id='unit.part',source_block_ids=['b3'],kind='table',
+        text='단계와 출력의 확정 합성 표',status='confirmed',basis='authored independent table',correction_ids=[]))
+    for p,d in zip(paths,[source,outline,review]): p.write_text(json.dumps(d))
+    context=units_for(load_review_files(*paths,[],tmp_path/'unused.json'),'unit.part',[])
+    assert {'block:fragment:collision','fragment:collision'}<=set(u['unit_id'] for u in context['units'])
+    assert len(context['units'])==len(set(u['unit_id'] for u in context['units']))
+
+
+def test_source_excluded_candidate_cannot_change_only_in_memory(inputs,tmp_path):
+    paths,a=inputs; result,_=run(tmp_path,a,[])
+    result_path=tmp_path/'results'/(operation_key(a.spec)+'.json')
+    draft=LessonDraft.model_validate(result['draft'])
+    ids=[c.claim_id for t in draft.topics for c in t.claims]+[q.question_id for q in draft.exercises]+[q.explanation.claim_id for q in draft.exercises]
+    review=ContentReview(result_digest=fingerprint(result),reviewed_ids=ids,reviewer='independent authored reviewer',decision='accepted',notes=[])
+    rp=tmp_path/'content/review.json'; rp.parent.mkdir(); rp.write_text(review.model_dump_json())
+    files=load_review_files(*paths,[],tmp_path/'unused.json')
+    next(f for f in files.review.fragments if f.status=='candidate').text='UNAPPROVED_LOCAL_MEMORY_CHANGE'
+    assert fingerprint(units_for(files,'unit.part',[]))==result['context_digest']
+    with pytest.raises(ValueError,match='authoritative input'):
+        write_reading_bundle(result_path,rp,files,'unit.part','체크포인트',tmp_path/'reading',budget_path=tmp_path/'ledger/budget.sqlite')
