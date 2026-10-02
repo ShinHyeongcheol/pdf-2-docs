@@ -140,12 +140,40 @@ def messages(context):
     return [SystemMessage(content=PROMPT), HumanMessage(content=json.dumps({'untrusted_evidence':context},ensure_ascii=False))]
 
 
+def wire_schema():
+    """Small provider schema; strict bounds remain in local LessonDraft validation."""
+    def trim(value):
+        if isinstance(value, dict):
+            return {k:({name:trim(schema) for name,schema in v.items()}
+                       if k in {'properties','$defs'} else trim(v)) for k,v in value.items()
+                    if k not in {'title','minLength','maxLength','minItems','maxItems'}}
+        if isinstance(value, list): return [trim(v) for v in value]
+        return value
+    return trim(LessonDraft.model_json_schema())
+
+
+def safe_error_code(exc):
+    """Persist only an allowlisted classification, never a provider error body."""
+    names={'GoogleInvalidRequestError','GoogleAuthenticationError','GooglePermissionDeniedError',
+           'GoogleModelNotFoundError','GoogleRateLimitError','GoogleAPIError','ReadTimeout',
+           'ConnectTimeout','ValueError','ValidationError','KeyboardInterrupt'}
+    name=type(exc).__name__
+    name=name if name in names else 'OtherError'
+    if name=='GoogleInvalidRequestError':
+        message=str(exc).casefold()  # Inspect in memory; do not log or persist this text.
+        if 'schema' in message: return name+':schema'
+        if 'token' in message: return name+':token_limit'
+        if 'billing' in message: return name+':billing'
+        if 'invalid_argument' in message: return name+':invalid_argument'
+    return name
+
+
 def expected_request(context):
     msgs = messages(context)
     return {'contents':[{'parts':[{'text':msgs[1].content}],'role':'user'}],
             'systemInstruction':{'parts':[{'text':msgs[0].content}]}, 'safetySettings':[],
             'generationConfig':{'candidateCount':1,'maxOutputTokens':8192,
-                                'responseMimeType':'application/json','responseJsonSchema':LessonDraft.model_json_schema()}}
+                                'responseMimeType':'application/json','responseJsonSchema':wire_schema()}}
 
 
 def verify_draft(context, draft):
@@ -332,7 +360,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             max_output_tokens=8192,client_args={'trust_env':False,'event_hooks':{'request':[guard]}})
         try:
             with tracing_context(enabled=False):
-                packet=client.with_structured_output(LessonDraft,method='json_schema',include_raw=True).invoke(messages(context))
+                packet=client.with_structured_output(wire_schema(),method='json_schema',include_raw=True).invoke(messages(context))
         finally:
             sdk=getattr(client,'client',None)
             if sdk is not None: sdk.close()
@@ -359,7 +387,58 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
         return result,'written'
     except BaseException as exc:
         if db.in_transaction: db.execute('ROLLBACK')
-        if reserved: db.execute('UPDATE reservations SET status=?,request_count=?,error_code=? WHERE operation=?',('failed',requests,type(exc).__name__,op))
+        if reserved: db.execute('UPDATE reservations SET status=?,request_count=?,error_code=? WHERE operation=?',('failed',requests,safe_error_code(exc),op))
+        raise
+    finally: db.close()
+
+
+def recover_positional_ids(result_path, *, budget_path):
+    """Offline recovery for duplicate IDs only; preserve provider text and original file."""
+    source=Path(result_path); _regular(source)
+    original=read_json_input(source,max_bytes=500000)
+    if original['status']!='failed_content_validation' or original['errors']!=['duplicate_claim_id']:
+        raise ValueError('only duplicate claim IDs are recoverable')
+    inputs=[Path(p) for p in original['input_paths']]
+    files=load_review_files(*inputs,[],source.parent/'unused-lesson-result.json')
+    context=units_for(files,original['context']['section_id'],original['excluded_pages'])
+    if (context!=original['context'] or fingerprint(context)!=original['context_digest'] or
+            [sha(p.read_bytes()) for p in inputs]!=original['input_sha256']):
+        raise ValueError('recovery source inputs changed')
+    draft=LessonDraft.model_validate(original['draft'])
+    if verify_draft(context,draft)!=['duplicate_claim_id']:
+        raise ValueError('recovery requires otherwise valid content')
+    changes=[]
+    claims=[c for t in draft.topics for c in t.claims]+[q.explanation for q in draft.exercises]
+    for i,c in enumerate(claims,1):
+        new_id=f'lesson-claim-{i:04d}'
+        changes.append(dict(position=f'claim:{i}',before=c.claim_id,after=new_id)); c.claim_id=new_id
+    for i,q in enumerate(draft.exercises,1):
+        new_id=f'lesson-question-{i:04d}'
+        changes.append(dict(position=f'question:{i}',before=q.question_id,after=new_id)); q.question_id=new_id
+    if verify_draft(context,draft): raise ValueError('recovered IDs failed validation')
+    target=source.with_name(original['operation_key']+'-ids.json'); _regular(target)
+    private_destination(target.parent,[*inputs])
+    recovered=dict(original,draft=draft.model_dump(mode='json'),errors=[],status='ready_for_content_review',
+        id_recovery=dict(method='positional_ids_only',original_result_path=str(source.resolve()),
+                         original_result_digest=fingerprint(original),original_errors=original['errors'],changes=changes,
+                         additional_model_requests=0,text_and_citations_changed=False))
+    db=_budget_connection(Path(budget_path))
+    try:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT status,result_path,result_sha,request_count FROM reservations WHERE operation=?',
+                       (original['operation_key'],)).fetchone()
+        if row==('completed',str(target.resolve()),fingerprint(recovered),1):
+            if read_json_input(target,max_bytes=500000)!=recovered: raise ValueError('recovered result changed')
+            db.execute('COMMIT'); return recovered,'unchanged'
+        if row!=('failed',str(source.resolve()),fingerprint(original),1): raise ValueError('failed executor receipt mismatch')
+        if target.exists(): raise ValueError('existing recovery without receipt; preserve it')
+        with target.open('x',encoding='utf-8') as stream:
+            stream.write(json.dumps(recovered,ensure_ascii=False,indent=2)+'\n'); stream.flush(); os.fsync(stream.fileno())
+        db.execute('UPDATE reservations SET status=?,result_path=?,result_sha=? WHERE operation=?',
+                   ('completed',str(target.resolve()),fingerprint(recovered),original['operation_key']))
+        db.execute('COMMIT'); return recovered,'written'
+    except BaseException:
+        if db.in_transaction: db.execute('ROLLBACK')
         raise
     finally: db.close()
 
