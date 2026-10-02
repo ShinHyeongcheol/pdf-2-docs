@@ -44,7 +44,7 @@ def load_review_files(source_path: Path, outline_path: Path, review_path: Path,
     hierarchy = HierarchicalOutline.model_validate(read_json_input(outline_path))
     review = ReviewLayer.model_validate(read_json_input(review_path))
     bindings = [SectionPage.model_validate(read_json_input(p, max_bytes=100_000)) for p in binding_paths]
-    asset_root = source_path.resolve().parent if source.kind == "ocr_ir" else None
+    asset_root = source_path.resolve().parent if source.kind in {"ocr_ir", "pdf_ir"} else None
     if asset_root is not None:
         protect_inputs(output, [Path(b.asset_ref) for b in source.document.blocks if b.kind == "image"])
     return ReviewFiles(source, hierarchy, review, bindings, asset_root)

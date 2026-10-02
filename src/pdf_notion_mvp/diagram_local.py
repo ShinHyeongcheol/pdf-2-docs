@@ -41,7 +41,7 @@ class DiagramDraft(Contract):
 def prepare_diagram(files,evidence):
     e=DiagramEvidence.model_validate(evidence.model_dump())
     reviewed=apply_review(files.source,files.hierarchy,files.review,files.asset_root)
-    if files.source.kind!='ocr_ir':raise ValueError('real local raster evidence requires OCR IR')
+    if files.source.kind not in {'ocr_ir','pdf_ir'}:raise ValueError('real local raster evidence requires OCR or native PDF IR')
     image=next((b for b in reviewed.original.blocks if b.block_id==e.image_block_id and b.kind=='image'),None)
     if (image is None or image.source.method!='raster' or
         (e.document_id,e.version,e.source_digest,e.image_sha256)!=(reviewed.original.document_id,

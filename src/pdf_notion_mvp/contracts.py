@@ -32,7 +32,7 @@ class Source(Contract):
     version: str = Field(min_length=1)
     page: int = Field(ge=1)
     bbox: Box
-    method: Literal["synthetic", "ocr", "raster"] = "synthetic"
+    method: Literal["synthetic", "ocr", "raster", "native"] = "synthetic"
     confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
 
 
@@ -114,7 +114,7 @@ class DocumentIR(Contract):
 
 
 class FixtureInput(Contract):
-    kind: Literal["synthetic_ir", "ocr_ir"] = "synthetic_ir"
+    kind: Literal["synthetic_ir", "ocr_ir", "pdf_ir"] = "synthetic_ir"
     document: DocumentIR
 
     @model_validator(mode="after")
@@ -127,6 +127,13 @@ class FixtureInput(Contract):
                 raise ValueError("OCR input blocks require OCR/raster provenance")
             if any(b.source.method == "ocr" and b.source.confidence is None for b in self.document.blocks):
                 raise ValueError("OCR text requires source confidence")
+        elif self.kind == "pdf_ir":
+            if extraction.engine != "pdfplumber-native-v1" or not extraction.human_review_required:
+                raise ValueError("native PDF input requires its extraction engine and review flag")
+            if any(b.source.method not in {"native", "raster"} or b.source.confidence is not None for b in self.document.blocks):
+                raise ValueError("native PDF input requires native/raster provenance without OCR confidence")
+            if any(not (isinstance(b, TextBlock) and b.source.method == "native" or isinstance(b, ImageBlock) and b.source.method == "raster") for b in self.document.blocks):
+                raise ValueError("native PDF input permits line text and page rasters; table/code grouping belongs in review")
         else:
             if extraction.model_dump() != ExtractionInfo().model_dump():
                 raise ValueError("synthetic input cannot claim real extraction metadata")

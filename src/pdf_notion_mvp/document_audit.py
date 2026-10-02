@@ -68,7 +68,7 @@ def audit_document(files, *, pdf_path=None, low_confidence=.9):
         page_count=len(source.pages),block_count=len(source.blocks),leaf_count=len(leaves),
         outline_exact_block_coverage=True,extraction_full_page_coverage=files.source.kind=='synthetic_ir' or
             source.extraction.pages_processed==[p.number for p in source.pages],
-        raster_assets_verified=files.source.kind=='ocr_ir',original_pdf_sha_verified=pdf_path is not None,
+        raster_assets_verified=files.source.kind in {'ocr_ir','pdf_ir'},original_pdf_sha_verified=pdf_path is not None,
         correction_queue=queue,figure_candidates=figure_candidates,
         missing_structured_kinds=[k for k in ['table','code'] if not any(b.kind==k for b in source.blocks)],
         fragment_counts=dict(Counter(f.kind+':'+f.status for f in reviewed.layer.fragments)),
