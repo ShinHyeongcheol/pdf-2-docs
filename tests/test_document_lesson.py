@@ -229,3 +229,11 @@ def test_http_failure_classification_never_saves_body_or_unknown_status(approval
     assert 'fabricated-private-key' not in p.read_text()
     if body['error']['status']=='INVALID_ARGUMENT':assert value['classification']=='schema' and value['provider_error_status']=='INVALID_ARGUMENT'
     else:assert value['classification']=='unclassified' and 'provider_error_status' not in value
+
+
+def test_cloze_must_leave_meaningful_context_not_just_bullet(approval):
+    _,context,_=validate_approval(approval,approval.plan_sha256,NOW)
+    value=draft(context);unit=context['units'][0];unit['text']='• LangSmith로 전체 실행을 추적합니다.'
+    q=value['pages'][0]['exercises'][0];q['unit_id']=unit['unit_id'];q['answer']=unit['text'][2:]
+    with pytest.raises(ValueError,match='unsupported cloze'):verify_draft(context,BatchDraft.model_validate(value))
+    q['answer']='LangSmith';assert verify_draft(context,BatchDraft.model_validate(value))

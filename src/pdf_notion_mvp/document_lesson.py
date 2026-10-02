@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,12 +30,18 @@ correct code, spelling, provider names, parameter ranges, or pretend code runs.
 Use only units on the SAME page for each note or cloze exercise. Cite existing unit IDs.
 Write exactly ONE short, useful note per page if there is readable substantive content.
 Never return more than one note or more than one exercise per page.
+If OCR is unreadable, leave notes/exercises empty; never guess a screenshot subject.
+Never claim OCR certainty from confidence, text length, or the absence of an obvious error.
+Do not call line wrapping a typo or missing source text.
+Keep source conditions such as which task makes a framework suitable.
 Cover/title/outline-only pages may have no notes; explain this in uncertainty.
 For a substantive page supply one cloze exercise: unit_id, answer (exact nontrivial
 substring of that unit text, NEVER the entire unit text), short explanation based only on this same source.
 Pick an exercise from a substantive sentence, not a title or isolated table label.
 For source 'LLM 기반 AI 서비스 개발', 'LLM' is a substring and the full line is not.
 No invented examples or treating sample model answers as factual knowledge.
+Choose a short key term or phrase as the cloze answer. Leave useful sentence clues;
+never remove almost the whole sentence so only a bullet or a generic suffix remains.
 At most one exercise per page; no exercise when OCR or sample outputs are unreliable.
 Every page needs a title and uncertainty explaining OCR/code/version limitations.
 For every attached diagram, explain ONLY the supplied independent observations.
@@ -170,7 +177,8 @@ def verify_draft(context,draft):
         for q in page.exercises:
             u=units.get(q.unit_id)
             if (u is None or u['source']['page']!=page.page or not q.explanation.strip() or
-                not q.answer.strip() or q.answer not in u['text'] or q.answer==u['text']):
+                not q.answer.strip() or q.answer not in u['text'] or q.answer==u['text'] or
+                len(re.sub(r'[^\w]','',u['text'].replace(q.answer,'',1)))<4):
                 raise ValueError('unsupported cloze answer')
     images={d['evidence']['image_block_id']:d['evidence'] for d in context['diagrams']}
     if [d.image_block_id for d in d.diagrams]!=list(images):raise ValueError('exact diagram coverage required')
