@@ -80,8 +80,8 @@ def generate_local_diagram(files,evidence,adapter=None):
     authority=deepcopy(context)
     errors=[];draft=None
     try:
-        if adapter.mode!='mock_local_diagram':raise ValueError('external diagram calls are disabled in this local path')
-        value=adapter.generate(deepcopy(context))
+        if type(adapter) is not MockDiagramAdapter or adapter.mode!='mock_local_diagram':raise ValueError('external diagram calls are disabled in this local path')
+        value=MockDiagramAdapter.generate(adapter,deepcopy(context))
         draft=DiagramDraft.model_validate(value.model_dump() if isinstance(value,DiagramDraft) else value)
         e=authority['evidence']
         if (draft.image_block_id!=e['image_block_id'] or

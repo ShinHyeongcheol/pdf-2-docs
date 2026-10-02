@@ -116,3 +116,24 @@ def test_real_file_interface_idempotent_input_sha_and_html_escaping(tmp_path):
 def test_modified_audit_cannot_reuse_old_batch_identity():
     a=audit_document(fixture());a['pages'][0]['text_blocks']+=1
     with pytest.raises(ValueError,match='digest'):plan_batches(a)
+
+
+@pytest.mark.parametrize('replacement',['symlink','hardlink','ordinary'])
+def test_checkpoint_replacement_after_store_creation_cannot_write_other_app(tmp_path,replacement):
+    p=tmp_path/'run.sqlite';store=LocalRunStore(p);other=tmp_path/'other.sqlite'
+    db=sqlite3.connect(other);db.execute('CREATE TABLE identity(value TEXT)');db.execute('INSERT INTO identity VALUES(?)',('other-application',));db.execute('CREATE TABLE pages(run_key TEXT,page INTEGER,status TEXT,payload TEXT,digest TEXT,error_code TEXT,PRIMARY KEY(run_key,page))');db.commit();db.close()
+    before=other.read_bytes();p.unlink()
+    if replacement=='symlink':p.symlink_to(other)
+    elif replacement=='hardlink':p.hardlink_to(other)
+    else:p.write_bytes(other.read_bytes())
+    with pytest.raises(ValueError):store.process('a'*64,[1],lambda p:pytest.fail('processor called'))
+    assert other.read_bytes()==before
+    if replacement=='ordinary':assert p.read_bytes()==before
+
+
+def test_mutable_processor_payload_and_tuples_have_same_snapshot_on_restart(tmp_path):
+    s=LocalRunStore(tmp_path/'run.sqlite');shared={}
+    def work(p):shared['page']=p;shared['values']=(p,p+1);return shared
+    first=s.process('c'*64,[1,2,3],work)
+    assert first==[{'page':p,'values':[p,p+1]} for p in [1,2,3]]
+    assert first==s.process('c'*64,[1,2,3],lambda p:pytest.fail('duplicate'))

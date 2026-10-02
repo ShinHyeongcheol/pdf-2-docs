@@ -61,3 +61,13 @@ def test_mutable_draft_instance_cannot_bypass_inference_contract(data):
     draft.causal_inferences=['unsupported cause']
     r=generate_local_diagram(f,e,MockDiagramAdapter(draft))
     assert r['status']=='failed_human_review' and r['draft'] is None
+
+
+def test_unknown_adapter_cannot_obtain_private_context_by_claiming_mock_mode(data):
+    f,e,_=data
+    class Unknown:
+        mode='mock_local_diagram'
+        def generate(self,c):pytest.fail('private context reached unknown adapter')
+    assert generate_local_diagram(f,e,Unknown())['status']=='failed_human_review'
+    a=MockDiagramAdapter();a.generate=lambda c:pytest.fail('instance override reached private context')
+    assert generate_local_diagram(f,e,a)['status']=='ready_for_review' and a.calls==1

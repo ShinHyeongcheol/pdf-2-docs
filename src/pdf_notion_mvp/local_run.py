@@ -32,6 +32,13 @@ class LocalRunStore:
         except (sqlite3.Error,ValueError):
             db.rollback();raise ValueError('unknown checkpoint database') from None
         finally:db.close()
+        self.file_identity=(self.path.stat().st_dev,self.path.stat().st_ino)
+
+    def validate_path(self):
+        private_destination(self.path.parent,[])
+        if (self.path.is_symlink() or not self.path.is_file() or self.path.stat().st_nlink!=1 or
+                (self.path.stat().st_dev,self.path.stat().st_ino)!=self.file_identity):
+            raise ValueError('checkpoint file changed')
 
     def process(self,run_key,pages,processor):
         if (not isinstance(run_key,str) or len(run_key)!=64 or any(c not in '0123456789abcdef' for c in run_key) or
@@ -40,9 +47,13 @@ class LocalRunStore:
         results=[]
         # A transaction per page preserves successful pages across crashes/restarts.
         for page in pages:
-            db=sqlite3.connect(self.path,timeout=10)
+            self.validate_path()
+            db=sqlite3.connect(self.path.absolute().as_uri()+'?mode=rw',uri=True,timeout=10)
             try:
                 db.execute('BEGIN IMMEDIATE')
+                self.validate_path()
+                if db.execute('SELECT value FROM identity').fetchall()!=[(IDENTITY,)]:
+                    raise ValueError('checkpoint database identity changed')
                 row=db.execute('SELECT status,payload,digest FROM pages WHERE run_key=? AND page=?',(run_key,page)).fetchone()
                 if row and row[0]=='completed':
                     payload=json.loads(row[1])
@@ -50,9 +61,13 @@ class LocalRunStore:
                     db.commit();results.append(payload);continue
                 try:
                     payload=processor(page)
+                    json.dumps(payload,allow_nan=False)
                     data=encode(payload)
+                    payload=json.loads(data)  # Freeze the exact JSON snapshot used by restart.
                     if len(data)>500000:raise ValueError('page payload limit exceeded')
+                    self.validate_path()
                 except Exception:
+                    self.validate_path()
                     db.execute('INSERT OR REPLACE INTO pages VALUES(?,?,?,?,?,?)',(run_key,page,'failed',None,None,'local_processor_error'))
                     db.commit();raise RuntimeError('local page failed; prior successes preserved') from None
                 db.execute('INSERT OR REPLACE INTO pages VALUES(?,?,?,?,?,?)',(run_key,page,'completed',data.decode(),sha(data),None))
