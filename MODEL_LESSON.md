@@ -117,3 +117,15 @@ HTTP 오류 응답은 원문 대신 `OPERATION-error.json`에 HTTP 상태, 허�
 않습니다. 실제 계정 청구 확인은 계속 false입니다. 증거 갱신으로 실패 작업을
 초기화할 수 없으며, API 없는 ID 복구·독립 검수·읽기 제작은 같은 무료 receipt를
 검증합니다. 복구 뒤 반복 생성도 복구된 완료 결과를 반환하고 키를 다시 읽지 않습니다.
+
+Explicit HTTP 503 retries for new verified-free requests are available through
+`create_proposal(http503_retry_of=original_error_receipt, http503_retry_index=1|2)`.
+Each separately authorized attempt sends the identical approved request once.
+The original failure remains consumed; fixed child operation keys permit at most
+two additional attempts, using the same project and original ledger path/device/inode.
+Wait at least 120 seconds from the response observation and honor a valid complete
+`Retry-After` header. A malformed or duplicate header blocks retry. Retry 2 requires
+retry 1 to have another observed 503/UNAVAILABLE failure. Quota, permission,
+ambiguous client failures and successful responses are not eligible. Historical
+receipts without an original ledger identity are blocked. This API does not
+schedule retries or authorize extra calls automatically.

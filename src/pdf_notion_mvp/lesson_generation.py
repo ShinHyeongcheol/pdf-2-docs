@@ -30,6 +30,7 @@ from .study_bundle import build_bundle, check_existing, encode, private_destinat
 from .instructional_lesson import (INSTRUCTIONAL_PROMPT, InstructionalDraft, PEDAGOGY_CHECKS,
     verify_instructional, review_ids as instructional_review_ids, render_instructional_html,unit_claims)
 from .teaching_plan import attach_plan,prose_schema,bind_prose,PROSE_PROMPT
+from .transient_retry import retry_key,validate_retry,observation
 
 COST_MICRO_USD = 360448
 BUDGET_MICRO_USD = 10000000
@@ -110,9 +111,15 @@ class LessonSpec(Contract):
     free_tier_evidence: FreeTierEvidence | None = None
     teaching_plan_path: str | None = None
     teaching_plan_sha256: str | None = None
+    http503_retry_of: str | None = None
+    http503_retry_index: Literal[1,2] | None = None
 
     @model_validator(mode='after')
     def billing_policy(self):
+        if (self.http503_retry_of is None)!=(self.http503_retry_index is None):
+            raise ValueError('explicit HTTP503 retry receipt and index required')
+        if self.http503_retry_of is not None and (not self.http503_retry_of or type(self.http503_retry_index) is not int or self.billing_mode!='verified_free'):
+            raise ValueError('HTTP503 retries require verified free execution')
         if bool(self.teaching_plan_path)!=bool(self.teaching_plan_sha256) or (self.teaching_plan_path and self.lesson_format!='instructional_v1'):
             raise ValueError('instructional teaching plan binding required')
         if self.billing_mode=='paid_reservation':
@@ -128,6 +135,8 @@ class LessonSpec(Contract):
         data=handler(self)
         if self.teaching_plan_path is None:
             data.pop('teaching_plan_path',None);data.pop('teaching_plan_sha256',None)
+        if self.http503_retry_of is None:
+            data.pop('http503_retry_of',None);data.pop('http503_retry_index',None)
         # Preserve historical approval/session fingerprints exactly.
         if self.lesson_format=='summary_v1':data.pop('lesson_format',None)
         if self.billing_mode=='paid_reservation':
@@ -284,7 +293,7 @@ def context_with_plan(context,path=None,digest=None):
     return attach_plan(context,packet)
 
 
-def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1',teaching_plan_path=None):
+def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1',teaching_plan_path=None,http503_retry_of=None,http503_retry_index=None):
     now = now or datetime.now(timezone.utc)
     paths=[Path(p) for p in paths]
     output=private_destination(Path(output_dir),paths)
@@ -313,7 +322,10 @@ def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,ke
         model_snapshot=ModelSnapshot(),input_paths=[str(p.resolve()) for p in paths],
         input_sha256=[sha(p.read_bytes()) for p in paths],section_id=section,exclude_pages=list(exclude_pages),
         output_dir=str(output),budget_ledger=str(budget.resolve()),key_project_root=str(key_root.resolve()),
-        context_digest=fingerprint(context),request_digest=fingerprint(request),lesson_format=lesson_format,**free_fields,**plan_fields)
+        context_digest=fingerprint(context),request_digest=fingerprint(request),lesson_format=lesson_format,
+        http503_retry_of=str(Path(http503_retry_of).resolve()) if http503_retry_of is not None else None,
+        http503_retry_index=http503_retry_index,**free_fields,**plan_fields)
+    validate_retry(spec,base_operation_key(spec),now)
     return LessonApproval(spec=spec,plan_sha256=fingerprint(spec.model_dump(mode='json')))
 
 
@@ -334,13 +346,19 @@ def validate_approval(approval,expected_sha,*,now=None):
     request=expected_request(context,a.spec.lesson_format)
     if fingerprint(context)!=a.spec.context_digest or fingerprint(request)!=a.spec.request_digest or len(encode(request))>a.spec.max_request_bytes:
         raise ValueError('approved request changed')
+    validate_retry(a.spec,base_operation_key(a.spec),now)
     return files,context
 
 
-def operation_key(spec):
+def base_operation_key(spec):
     parts=[spec.input_sha256,spec.section_id,spec.exclude_pages,spec.model_snapshot.model,spec.request_digest]
     if spec.billing_mode=='verified_free':parts+=['verified_free',spec.free_tier_evidence.project_id]
     return fingerprint(parts)
+
+
+def operation_key(spec):
+    base=base_operation_key(spec)
+    return retry_key(base,spec.http503_retry_index) if spec.http503_retry_of else base
 
 
 def _execution_connection(spec):
@@ -409,7 +427,7 @@ def seed_previous_run(path, receipt_path):
     finally: db.close()
 
 
-def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,client_factory=None,key_provider=None,now=None,free_project_verifier=None):
+def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,client_factory=None,key_provider=None,now=None,free_project_verifier=None,response_clock=None):
     a=LessonApproval.model_validate(approval.model_dump())
     _,context=validate_approval(a,expected_sha,now=now)
     if [str(Path(p).resolve()) for p in [output_dir,budget_path,key_project_root]] != [a.spec.output_dir,a.spec.budget_ledger,a.spec.key_project_root]:
@@ -483,6 +501,10 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
                 receipt=dict(schema_version='1',status='observed_safe_error_diagnostic',
                     operation_key=op,context_digest=a.spec.context_digest,
                     request_digest=a.spec.request_digest,request_count=requests,diagnostic=diagnostic)
+                receipt.update(observation(response,response_clock() if response_clock else datetime.now(timezone.utc)))
+                ledger_stat=Path(a.spec.free_ledger or budget).stat()
+                receipt.update(execution_ledger=str(Path(a.spec.free_ledger or budget).resolve()),
+                    ledger_device=ledger_stat.st_dev,ledger_inode=ledger_stat.st_ino)
                 root.mkdir(parents=True,exist_ok=True); _regular(error_path)
                 fd=os.open(error_path,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
                 with os.fdopen(fd,'w',encoding='utf-8') as stream:
@@ -565,6 +587,8 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
         if a.spec.teaching_plan_path:
             result.update(teaching_plan_path=a.spec.teaching_plan_path,teaching_plan_sha256=a.spec.teaching_plan_sha256,
                           generation_stages=['reviewed_evidence_plan','model_prose','deterministic_binding','independent_review_required'])
+        if a.spec.http503_retry_of:
+            result.update(http503_retry_of=a.spec.http503_retry_of,http503_retry_index=a.spec.http503_retry_index)
         root.mkdir(parents=True,exist_ok=True)
         with result_path.open('x',encoding='utf-8') as stream:
             stream.write(json.dumps(result,ensure_ascii=False,indent=2)+'\n'); stream.flush(); os.fsync(stream.fileno())
