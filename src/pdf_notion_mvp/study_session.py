@@ -79,7 +79,7 @@ def _plan_path(session, proposal):
     return Path(session.session_dir)/'plans'/(proposal.plan_sha256+'.json')
 
 
-def prepare(paths, section, question, directory, budget, key_root, exclude_pages=(), *, now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1'):
+def prepare(paths, section, question, directory, budget, key_root, exclude_pages=(), *, now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1',teaching_plan_path=None):
     paths=[Path(p) for p in paths]
     root=private_destination(Path(directory),paths)
     files=load_review_files(*paths,[],root/'unused.json')
@@ -87,7 +87,7 @@ def prepare(paths, section, question, directory, budget, key_root, exclude_pages
         raise ValueError('confirmed global outline required')
     proposal=create_proposal(paths,section,exclude_pages,output_dir=root/'model-results',
                              budget_ledger=budget,key_project_root=key_root,now=now,
-                             free_tier_evidence=free_tier_evidence,free_ledger=free_ledger,lesson_format=lesson_format)
+                             free_tier_evidence=free_tier_evidence,free_ledger=free_ledger,lesson_format=lesson_format,teaching_plan_path=teaching_plan_path)
     if (root/'session.json').exists() or (root/'session.json').is_symlink():
         session=_load(root)
         if _scope(session.proposal.spec)!=_scope(proposal.spec) or session.question!=question:
@@ -108,7 +108,7 @@ def plan(session, *, now=None):
     spec=session.proposal.spec
     proposal=create_proposal(spec.input_paths,spec.section_id,spec.exclude_pages,
         output_dir=spec.output_dir,budget_ledger=spec.budget_ledger,key_project_root=spec.key_project_root,now=now,
-        free_tier_evidence=spec.free_tier_evidence,free_ledger=spec.free_ledger,lesson_format=spec.lesson_format)
+        free_tier_evidence=spec.free_tier_evidence,free_ledger=spec.free_ledger,lesson_format=spec.lesson_format,teaching_plan_path=spec.teaching_plan_path)
     if _scope(proposal.spec)!=_scope(spec):
         raise ValueError('session request changed; prepare a new session')
     _save(_plan_path(session,proposal),proposal.model_dump(mode='json'))
@@ -156,6 +156,7 @@ def main(argv=None):
     for flag in ('section','question'):
         prepare_parser.add_argument('--'+flag,required=True)
     prepare_parser.add_argument('--lesson-format',choices=['instructional_v1','summary_v1'],default='instructional_v1')
+    prepare_parser.add_argument('--teaching-plan',type=Path)
     prepare_parser.add_argument('--exclude-page',type=int,action='append',default=[])
     prepare_parser.add_argument('--free-evidence',type=Path)
     prepare_parser.add_argument('--free-ledger',type=Path)
@@ -174,7 +175,7 @@ def main(argv=None):
             evidence=FreeTierEvidence.model_validate(read_json_input(args.free_evidence)) if args.free_evidence else None
             session,status=prepare([args.source,args.outline,args.review],args.section,args.question,
                 args.session_dir,args.budget_ledger,args.key_project_root,args.exclude_page,
-                free_tier_evidence=evidence,free_ledger=args.free_ledger,lesson_format=args.lesson_format)
+                free_tier_evidence=evidence,free_ledger=args.free_ledger,lesson_format=args.lesson_format,teaching_plan_path=args.teaching_plan)
             packet=dict(status=status,model_requests=0,key_reads=0,notion_requests=0,**summary(session))
         else:
             session=_load(args.session_dir)

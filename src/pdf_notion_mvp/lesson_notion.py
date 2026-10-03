@@ -116,7 +116,7 @@ def render_instructional_notion(result,bundle,bindings,notes=()):
     if notes:body+='\n\n'+toggle('읽기 안내','\n'.join(encode_text(n) for n in notes))
     body+='\n\n'+toggle('원본과 전사 · 필요할 때 펼치기',render_sources(bundle,bindings,
                                placed_pages=placed_pages,placed_fragments=placed_fragments))
-    return body+'\n\n'+render_practice(draft)
+    return body+'\n\n'+render_practice(draft,result['context'])
 
 
 def confirm_lesson(packet, checkpoint, images):
