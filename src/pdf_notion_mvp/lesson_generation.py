@@ -168,16 +168,24 @@ def units_for(files, section_id, exclude_pages):
 
 
 def messages(context,lesson_format='summary_v1'):
-    return [SystemMessage(content=INSTRUCTIONAL_PROMPT if lesson_format=='instructional_v1' else PROMPT), HumanMessage(content=json.dumps({'untrusted_evidence':context},ensure_ascii=False))]
+    payload={'untrusted_evidence':context}
+    if lesson_format=='instructional_v1':
+        payload['required_main_teaching_unit_ids']=[u['unit_id'] for u in context['units']]
+    return [SystemMessage(content=INSTRUCTIONAL_PROMPT if lesson_format=='instructional_v1' else PROMPT), HumanMessage(content=json.dumps(payload,ensure_ascii=False))]
 
 
 def wire_schema(lesson_format='summary_v1'):
     """Provider-compatible schema; all count and string bounds are enforced locally."""
     def trim(value):
         if isinstance(value, dict):
-            return {k:({name:trim(schema) for name,schema in v.items()}
+            trimmed = {k:({name:trim(schema) for name,schema in v.items()}
                        if k in {'properties','$defs'} else trim(v)) for k,v in value.items()
                     if k not in {'title','minLength','maxLength','minItems','maxItems'}}
+            # Singleton literals use the provider's supported string enum form.
+            # Keep historical summary requests byte-identical for replay.
+            if lesson_format=='instructional_v1' and 'const' in trimmed:
+                trimmed['enum']=[trimmed.pop('const')]
+            return trimmed
         if isinstance(value, list): return [trim(v) for v in value]
         return value
     return trim((InstructionalDraft if lesson_format=='instructional_v1' else LessonDraft).model_json_schema())

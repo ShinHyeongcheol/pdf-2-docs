@@ -90,6 +90,45 @@ def test_new_session_default_is_instructional_and_legacy_replay_is_explicit(inpu
     assert 'summary_v1' not in a.spec.model_dump_json()  # historical fingerprints
 
 
+@pytest.mark.parametrize('invalid',['format','example_kind','mechanism_count'])
+def test_provider_200_invalid_instructional_response_is_preserved_without_retry(inputs,tmp_path,invalid):
+    paths,legacy=inputs
+    files=load_review_files(*paths,[],tmp_path/'unused.json')
+    context=units_for(files,legacy.spec.section_id,[])
+    draft=teaching(context).model_dump()
+    if invalid=='format':draft['lesson_format']='Instructional Chapter'
+    elif invalid=='example_kind':draft['teaching_units'][0]['example']['kind']='pedagogical illustration'
+    else:draft['teaching_units'][0]['mechanism']=draft['teaching_units'][0]['mechanism'][:1]
+    result_dir=tmp_path/'live-like-result';budget=tmp_path/'live-like-budget.sqlite';seen=[]
+    proposal=create_proposal(paths,legacy.spec.section_id,output_dir=result_dir,
+        budget_ledger=budget,key_project_root=ROOT,now=NOW)
+    for k in ['user_approved','data_transfer_confirmed','budget_confirmed','pricing_capabilities_confirmed']:
+        setattr(proposal,k,True)
+    def build(**kwargs):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        def respond(request):
+            seen.append(request)
+            schema=json.loads(request.content)['generationConfig']['responseJsonSchema']
+            assert schema['properties']['lesson_format']['enum']==['instructional_v1']
+            assert schema['$defs']['WorkedExample']['properties']['kind']['enum']==['pedagogical_illustration']
+            assert 'const' not in schema['properties']['lesson_format']
+            return httpx.Response(200,json={'candidates':[{'content':{'role':'model','parts':[
+                {'text':json.dumps(draft,ensure_ascii=False)}]},'finishReason':'STOP'}]})
+        kwargs['client_args']['transport']=httpx.MockTransport(respond)
+        return ChatGoogleGenerativeAI(**kwargs)
+    with pytest.raises(ValidationError):
+        execute(proposal,proposal.plan_sha256,budget,result_dir,ROOT,
+            client_factory=build,key_provider=lambda:'fabricated-private-key',now=NOW)
+    receipts=list(result_dir.glob('*-provider.json'))
+    assert len(seen)==len(receipts)==1  # one actual SDK request
+    original=receipts[0].read_bytes()
+    assert original  # preserve the provider receipt even when local parsing fails
+    with pytest.raises(ValueError,match='no automatic retry'):
+        execute(proposal,proposal.plan_sha256,budget,result_dir,ROOT,
+            key_provider=lambda:pytest.fail('retry read key'),now=NOW)
+    assert receipts[0].read_bytes()==original and len(seen)==1
+
+
 def test_changed_lesson_format_blocks_before_key_or_budget_write(inputs,tmp_path):
     paths,_=inputs
     proposal=create_proposal(paths,'unit.part',output_dir=tmp_path/'new-result',

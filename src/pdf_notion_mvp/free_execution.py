@@ -60,6 +60,9 @@ def validate_evidence(evidence, now=None):
 
 def verified_project(key,evidence):
     """Only an explicitly approved local matcher receives the key, through stdin."""
+    # Verify executable/screenshot fingerprints before giving the matcher a key.
+    # Callers separately enforce current freshness, or the explicit reuse policy.
+    evidence=validate_evidence(evidence,evidence.verified_at)
     if not evidence.project_matcher_path:raise ValueError('runtime free project verifier required')
     result=subprocess.run([evidence.project_matcher_path,evidence.image_paths[-1]],input=key,
                           text=True,capture_output=True,timeout=15)
@@ -70,6 +73,30 @@ def verified_project(key,evidence):
             or packet.get('projects')!=[evidence.project_id]):
         raise ValueError('current key project differs from verified free project')
     return evidence.project_id
+
+
+def reuse_recent_evidence(evidence, *, current_project_id, same_authorized_scope_confirmed=False,
+                         local_expiry_only_confirmed=False, known_key_changed=False,
+                         known_tier_changed=False, now=None):
+    """Explicitly reissue a locally timed-out proof for the same authorized work.
+
+    This is not a provider expiry or quota bypass. Original observation time,
+    screenshots, matcher and project are retained; the window never slides beyond
+    24 hours from the original verification. Callers must first match the current
+    key against the approved screenshot. Known changes require new verification.
+    Historical evidence/approvals remain unchanged and require a new run approval.
+    """
+    now=now or datetime.now(timezone.utc)
+    evidence=validate_evidence(evidence,evidence.verified_at)
+    if (same_authorized_scope_confirmed is not True or local_expiry_only_confirmed is not True
+            or known_key_changed is not False or known_tier_changed is not False
+            or current_project_id!=evidence.project_id):
+        raise ValueError('same-work evidence reuse requires unchanged verified project/key/tier')
+    limit=evidence.verified_at+timedelta(hours=24)
+    if now.tzinfo is None or not evidence.verified_at<=now<limit:
+        raise ValueError('recent evidence reuse window exceeded')
+    updated=evidence.model_copy(update={'expires_at':limit})
+    return validate_evidence(updated,now)
 
 
 def paid_total_readonly(path):

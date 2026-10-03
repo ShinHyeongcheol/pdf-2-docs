@@ -33,6 +33,23 @@ End with a few reasoning/application questions; answers explain why. Do not use
 cloze or demand verbatim source recall. Original transcripts and audits are supporting
 material, not the instructional body. Return only the requested structured schema.
 Use globally unique IDs for units, examples, claims and questions.
+Set lesson_format to exactly "instructional_v1" and every example.kind to exactly
+"pedagogical_illustration"; these are machine identifiers, not prose labels.
+Each teaching unit needs 2–10 DISTINCT mechanism claims: explain the steps and
+their consequences in connected paragraphs, rather than listing feature names.
+Before returning, account for every supplied unit_id in covered_unit_ids AND in
+the citations of that unit's visible teaching claims. A heading/table label also
+needs a relevant explanation; do not silently discard apparently repetitive units.
+For Model evidence, connect initialization -> invocation -> response content,
+explain Chat messages versus Completion text, and explain synchronous versus
+asynchronous waiting, rather than only naming these operations. Explain what
+retry and caching change and do not claim that either improves correctness.
+For parameter tables, attribute each range to the supplied source example, not
+all providers; lower temperature does not guarantee a deterministic answer.
+In each example interpretation, explain the expected result conditionally. An
+invented expected output illustrates a concept; it proves no behavior or performance.
+Teach only what the evidence supports. When a requested implementation detail
+is absent, explicitly identify that limitation rather than inventing code or APIs.
 No images, credentials, local paths or external retrieval."""
 
 PEDAGOGY_CHECKS = {'concept_coverage', 'connected_explanation', 'worked_examples',
