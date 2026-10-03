@@ -1,5 +1,10 @@
 # 절 학습 묶음 → 지정 Notion 허브
 
+이 모듈의 source-only 출력은 기존 감사/연결 계약입니다. 검수한 모델 학습 자료의
+사용자용 게시에는 [REVIEWED_PDF_WORKFLOW.md](REVIEWED_PDF_WORKFLOW.md)와
+`lesson_notion`을 사용하세요. 새 경로는 일반 원문을 글·표·코드로 표시하며
+내부 JSON과 보이는 동기화 마커를 학습 본문에 노출하지 않습니다.
+
 `study_notion`은 기존 source IR·목차·검토 자료에서 `study_bundle.build_bundle`을 다시 실행하고, 한 절의 **새 하위 페이지 생성 인수**를 준비합니다. 내부 Notion/API 클라이언트·키·모델 호출은 없습니다. 실제 호출은 연결된 호스트 MCP가 수행합니다. 기존 원문 샘플이나 메모를 수정하는 action을 만들지 않습니다.
 
 호스트 입력:

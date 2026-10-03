@@ -183,7 +183,7 @@ def main(argv=None):
             elif args.action=='generate':
                 result,status=generate(session,args.approval,args.expected_plan_sha256)
                 packet=dict(status=status,content_status=result['status'],operation_key=result['operation_key'],
-                            result_path=str(Path(session.proposal.spec.output_dir)/(result['operation_key']+'.json')),
+                            result_path=str(Path(session.proposal.spec.output_dir)/(result['operation_key']+('-ids.json' if result.get('id_recovery') else '.json'))),
                             execution_mode=result['execution_mode'],notion_status='not_requested')
             else:
                 final,status=render(session,args.content_review,args.result)
