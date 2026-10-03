@@ -23,7 +23,7 @@ def inputs(lesson_inputs):
 
 def session_for(a,tmp_path):
     return prepare(a.spec.input_paths,a.spec.section_id,'체크포인트',tmp_path/'session',
-                   tmp_path/'ledger/budget.sqlite',ROOT,now=NOW)
+                   tmp_path/'ledger/budget.sqlite',ROOT,now=NOW,lesson_format='summary_v1')
 
 
 def test_session_review_plan_generation_render_and_repeat_are_connected(inputs,tmp_path):
@@ -76,7 +76,7 @@ def test_changed_session_blocks_before_key(inputs,tmp_path,changed):
         with pytest.raises(ValueError,match='inputs changed'):_load(tmp_path/'session')
     elif changed=='scope':
         with pytest.raises(ValueError,match='scope changed'):
-            prepare(a.spec.input_paths,a.spec.section_id,'새 질문',tmp_path/'session',tmp_path/'ledger/budget.sqlite',ROOT,now=NOW)
+            prepare(a.spec.input_paths,a.spec.section_id,'새 질문',tmp_path/'session',tmp_path/'ledger/budget.sqlite',ROOT,now=NOW,lesson_format='summary_v1')
     elif changed=='manifest':
         path=tmp_path/'session/session.json';packet=json.loads(path.read_text());packet['session']['question']='tampered'
         path.write_text(json.dumps(packet))
@@ -110,7 +110,7 @@ def test_cli_cached_generation_returns_recovered_file_path_without_key_or_transp
     from pdf_notion_mvp.lesson_generation import recover_positional_ids
     from pdf_notion_mvp import study_session
     paths,a=inputs;now=NOW
-    session,_=prepare(paths,a.spec.section_id,'체크포인트',tmp_path/'session',tmp_path/'ledger/budget.sqlite',ROOT,now=now)
+    session,_=prepare(paths,a.spec.section_id,'체크포인트',tmp_path/'session',tmp_path/'ledger/budget.sqlite',ROOT,now=now,lesson_format='summary_v1')
     approval=session.proposal.model_copy(deep=True)
     for key in ('user_approved','data_transfer_confirmed','budget_confirmed','pricing_capabilities_confirmed'):setattr(approval,key,True)
     ap=tmp_path/'approved.json';ap.write_text(approval.model_dump_json())

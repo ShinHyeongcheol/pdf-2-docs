@@ -27,6 +27,9 @@ from .quiz import cloze_question, prepare_context
 from .rag_files import load_review_files, read_json_input
 from .study_bundle import build_bundle, check_existing, encode, private_destination, sha, render as render_source
 
+from .instructional_lesson import (INSTRUCTIONAL_PROMPT, InstructionalDraft, PEDAGOGY_CHECKS,
+    verify_instructional, review_ids as instructional_review_ids, render_instructional_html,unit_claims)
+
 COST_MICRO_USD = 360448
 BUDGET_MICRO_USD = 10000000
 PROMPT = """Write a Korean study note from the supplied reviewed evidence only.
@@ -101,6 +104,7 @@ class LessonSpec(Contract):
     conditional_cost_micro_usd: Literal[0,360448] = COST_MICRO_USD
     cumulative_budget_micro_usd: Literal[10000000] = BUDGET_MICRO_USD
     billing_mode: Literal['paid_reservation','verified_free'] = 'paid_reservation'
+    lesson_format: Literal['summary_v1','instructional_v1'] = 'summary_v1'
     free_ledger: str | None = None
     free_tier_evidence: FreeTierEvidence | None = None
 
@@ -117,7 +121,8 @@ class LessonSpec(Contract):
     @model_serializer(mode='wrap')
     def serialize_policy(self, handler):
         data=handler(self)
-        # Preserve historical paid approval/session fingerprints exactly.
+        # Preserve historical approval/session fingerprints exactly.
+        if self.lesson_format=='summary_v1':data.pop('lesson_format',None)
         if self.billing_mode=='paid_reservation':
             for name in ('billing_mode','free_ledger','free_tier_evidence'):data.pop(name,None)
         return data
@@ -162,11 +167,11 @@ def units_for(files, section_id, exclude_pages):
                 source_digest=context.source_digest, units=units)
 
 
-def messages(context):
-    return [SystemMessage(content=PROMPT), HumanMessage(content=json.dumps({'untrusted_evidence':context},ensure_ascii=False))]
+def messages(context,lesson_format='summary_v1'):
+    return [SystemMessage(content=INSTRUCTIONAL_PROMPT if lesson_format=='instructional_v1' else PROMPT), HumanMessage(content=json.dumps({'untrusted_evidence':context},ensure_ascii=False))]
 
 
-def wire_schema():
+def wire_schema(lesson_format='summary_v1'):
     """Provider-compatible schema; all count and string bounds are enforced locally."""
     def trim(value):
         if isinstance(value, dict):
@@ -175,7 +180,7 @@ def wire_schema():
                     if k not in {'title','minLength','maxLength','minItems','maxItems'}}
         if isinstance(value, list): return [trim(v) for v in value]
         return value
-    return trim(LessonDraft.model_json_schema())
+    return trim((InstructionalDraft if lesson_format=='instructional_v1' else LessonDraft).model_json_schema())
 
 
 def safe_error_code(exc):
@@ -194,15 +199,26 @@ def safe_error_code(exc):
     return name
 
 
-def expected_request(context):
-    msgs = messages(context)
+def expected_request(context,lesson_format='summary_v1'):
+    msgs = messages(context,lesson_format)
     return {'contents':[{'parts':[{'text':msgs[1].content}],'role':'user'}],
             'systemInstruction':{'parts':[{'text':msgs[0].content}]}, 'safetySettings':[],
             'generationConfig':{'candidateCount':1,'maxOutputTokens':8192,
-                                'responseMimeType':'application/json','responseJsonSchema':wire_schema()}}
+                                'responseMimeType':'application/json','responseJsonSchema':wire_schema(lesson_format)}}
+
+
+def parse_draft(packet,lesson_format=None):
+    fmt=lesson_format or packet.get('lesson_format','summary_v1')
+    return (InstructionalDraft if fmt=='instructional_v1' else LessonDraft).model_validate(packet)
+
+
+def draft_review_ids(draft):
+    if isinstance(draft,InstructionalDraft):return instructional_review_ids(draft)
+    return [c.claim_id for t in draft.topics for c in t.claims]+[q.question_id for q in draft.exercises]+[q.explanation.claim_id for q in draft.exercises]
 
 
 def verify_draft(context, draft):
+    if isinstance(draft,InstructionalDraft):return verify_instructional(context,draft)
     draft = LessonDraft.model_validate(draft.model_dump())
     units = {e['unit_id']:e['text'] for e in context['units']}
     errors, ids, questions, titles = [], set(), set(), set()
@@ -239,7 +255,7 @@ def _inputs(spec):
     return files, units_for(files,spec.section_id,spec.exclude_pages)
 
 
-def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None):
+def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1'):
     now = now or datetime.now(timezone.utc)
     paths=[Path(p) for p in paths]
     output=private_destination(Path(output_dir),paths)
@@ -249,7 +265,7 @@ def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,ke
     if not key_root.is_absolute() or key_root.is_symlink() or any(p.is_symlink() for p in key_root.parents): raise ValueError('explicit regular key project root required')
     files=load_review_files(*paths,[],paths[0].parent/'unused-lesson-result.json')
     context=units_for(files,section,list(exclude_pages))
-    request=expected_request(context)
+    request=expected_request(context,lesson_format)
     if len(encode(request))>100000: raise ValueError('request byte limit exceeded')
     free_fields={}
     if free_tier_evidence is not None:
@@ -264,7 +280,7 @@ def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,ke
         model_snapshot=ModelSnapshot(),input_paths=[str(p.resolve()) for p in paths],
         input_sha256=[sha(p.read_bytes()) for p in paths],section_id=section,exclude_pages=list(exclude_pages),
         output_dir=str(output),budget_ledger=str(budget.resolve()),key_project_root=str(key_root.resolve()),
-        context_digest=fingerprint(context),request_digest=fingerprint(request),**free_fields)
+        context_digest=fingerprint(context),request_digest=fingerprint(request),lesson_format=lesson_format,**free_fields)
     return LessonApproval(spec=spec,plan_sha256=fingerprint(spec.model_dump(mode='json')))
 
 
@@ -282,7 +298,7 @@ def validate_approval(approval,expected_sha,*,now=None):
         raise ValueError('price/capability snapshot requires review')
     if a.spec.billing_mode=='verified_free':validate_evidence(a.spec.free_tier_evidence,now)
     files,context=_inputs(a.spec)
-    request=expected_request(context)
+    request=expected_request(context,a.spec.lesson_format)
     if fingerprint(context)!=a.spec.context_digest or fingerprint(request)!=a.spec.request_digest or len(encode(request))>a.spec.max_request_bytes:
         raise ValueError('approved request changed')
     return files,context
@@ -392,7 +408,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
                     raise ValueError('saved recovery source changed')
             if fingerprint(raw)!=existing[2] or raw['context_digest']!=a.spec.context_digest or raw['status']!='ready_for_content_review':
                 raise ValueError('saved result changed; human review required')
-            if verify_draft(context,LessonDraft.model_validate(raw['draft'])): raise ValueError('saved result failed validation')
+            if verify_draft(context,parse_draft(raw['draft'],a.spec.lesson_format)): raise ValueError('saved result failed validation')
             return raw,'unchanged'
         total=(paid_total_readonly(budget.resolve()) if a.spec.billing_mode=='verified_free'
                else db.execute('SELECT coalesce(sum(cost),0) FROM reservations').fetchone()[0])
@@ -430,7 +446,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             # HTTP response hooks run before the SDK parses structured output.
             # Never persist credentials, request headers or provider error bodies.
             if response.status_code != 200:
-                diagnostic=safe_error_diagnostic(response,expected_request(context),key,a.spec.model_snapshot.model)
+                diagnostic=safe_error_diagnostic(response,expected_request(context,a.spec.lesson_format),key,a.spec.model_snapshot.model)
                 receipt=dict(schema_version='1',status='observed_safe_error_diagnostic',
                     operation_key=op,context_digest=a.spec.context_digest,
                     request_digest=a.spec.request_digest,request_count=requests,diagnostic=diagnostic)
@@ -487,14 +503,14 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             max_output_tokens=8192,client_args={'trust_env':False,'event_hooks':{'request':[guard],'response':[preserve_response]}})
         try:
             with tracing_context(enabled=False):
-                packet=client.with_structured_output(wire_schema(),method='json_schema',include_raw=True).invoke(messages(context))
+                packet=client.with_structured_output(wire_schema(a.spec.lesson_format),method='json_schema',include_raw=True).invoke(messages(context,a.spec.lesson_format))
         finally:
             sdk=getattr(client,'client',None)
             if sdk is not None: sdk.close()
         if (requests!=1 or packet.get('parsing_error') or packet.get('parsed') is None
                 or getattr(packet['raw'],'response_metadata',{}).get('finish_reason')!='STOP'):
             raise ValueError('incomplete model response')
-        draft=LessonDraft.model_validate(packet['parsed'])
+        draft=parse_draft(packet['parsed'],a.spec.lesson_format)
         errors=verify_draft(context,draft)
         usage=getattr(packet['raw'],'usage_metadata',None) or {}
         tokens={k:usage[k] for k in ['input_tokens','output_tokens','total_tokens'] if type(usage.get(k)) is int and usage[k]>=0}
@@ -512,6 +528,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             free_project_id=a.spec.free_tier_evidence.project_id if a.spec.free_tier_evidence else None,
             free_tier_evidence_digest=fingerprint(a.spec.free_tier_evidence.model_dump(mode='json')) if a.spec.free_tier_evidence else None,
             human_review_required=True,semantic_correctness_verified=False)
+        if a.spec.lesson_format=='instructional_v1':result['lesson_format']=a.spec.lesson_format
         root.mkdir(parents=True,exist_ok=True)
         with result_path.open('x',encoding='utf-8') as stream:
             stream.write(json.dumps(result,ensure_ascii=False,indent=2)+'\n'); stream.flush(); os.fsync(stream.fileno())
@@ -529,7 +546,8 @@ def recover_positional_ids(result_path, *, budget_path):
     """Offline recovery for duplicate IDs only; preserve provider text and original file."""
     source=Path(result_path); _regular(source)
     original=read_json_input(source,max_bytes=500000)
-    if original['status']!='failed_content_validation' or original['errors']!=['duplicate_claim_id']:
+    expected_error=('duplicate_instructional_id' if original.get('lesson_format')=='instructional_v1' else 'duplicate_claim_id')
+    if original['status']!='failed_content_validation' or original['errors']!=[expected_error]:
         raise ValueError('only duplicate claim IDs are recoverable')
     inputs=[Path(p) for p in original['input_paths']]
     files=load_review_files(*inputs,[],source.parent/'unused-lesson-result.json')
@@ -537,11 +555,18 @@ def recover_positional_ids(result_path, *, budget_path):
     if (context!=original['context'] or fingerprint(context)!=original['context_digest'] or
             [sha(p.read_bytes()) for p in inputs]!=original['input_sha256']):
         raise ValueError('recovery source inputs changed')
-    draft=LessonDraft.model_validate(original['draft'])
-    if verify_draft(context,draft)!=['duplicate_claim_id']:
+    draft=parse_draft(original['draft'],original.get('lesson_format','summary_v1'))
+    if verify_draft(context,draft)!=[expected_error]:
         raise ValueError('recovery requires otherwise valid content')
     changes=[]
-    claims=[c for t in draft.topics for c in t.claims]+[q.explanation for q in draft.exercises]
+    if isinstance(draft,InstructionalDraft):
+        for i,u in enumerate(draft.teaching_units,1):
+            new_id=f'lesson-teaching-{i:04d}'
+            changes.append(dict(position=f'teaching:{i}',before=u.teaching_id,after=new_id));u.teaching_id=new_id
+            new_id=f'lesson-example-{i:04d}'
+            changes.append(dict(position=f'example:{i}',before=u.example.example_id,after=new_id));u.example.example_id=new_id
+        claims=[c for u in draft.teaching_units for c in unit_claims(u)]+[q.answer for q in draft.exercises]
+    else:claims=[c for t in draft.topics for c in t.claims]+[q.explanation for q in draft.exercises]
     for i,c in enumerate(claims,1):
         new_id=f'lesson-claim-{i:04d}'
         changes.append(dict(position=f'claim:{i}',before=c.claim_id,after=new_id)); c.claim_id=new_id
@@ -583,9 +608,19 @@ class ContentReview(Contract):
     decision: Literal['accepted', 'needs_changes']
     notes: list[str]
     review_kind: Literal['independent_source_comparison'] = 'independent_source_comparison'
+    pedagogy_checks: list[str] = Field(default_factory=list)
+
+    @model_serializer(mode='wrap')
+    def serialize_review(self,handler):
+        data=handler(self)
+        if not self.pedagogy_checks:data.pop('pedagogy_checks',None)
+        return data
 
 
-def render_lesson(result,review,title='Model'):
+def render_lesson(result,review,title='Model',bundle=None):
+    if result.get('lesson_format')=='instructional_v1':
+        if bundle is None:raise ValueError('instructional source bundle required')
+        return render_instructional_html(parse_draft(result['draft'],'instructional_v1'),result['context'],title,bundle,review.notes)
     esc=lambda s:html.escape(str(s),quote=True)
     units={u['unit_id']:u for u in result['context']['units']}
     def refs(citations):
@@ -638,8 +673,10 @@ def write_reading_bundle(result_path,review_path,files,section,question,output_d
     context=units_for(files,section,pages)
     if fingerprint(context)!=result['context_digest'] or context!=result['context']:
         raise ValueError('current source context differs')
-    draft=LessonDraft.model_validate(result['draft'])
-    ids=[c.claim_id for t in draft.topics for c in t.claims]+[q.question_id for q in draft.exercises]+[q.explanation.claim_id for q in draft.exercises]
+    draft=parse_draft(result['draft'],result.get('lesson_format','summary_v1'))
+    ids=draft_review_ids(draft)
+    if isinstance(draft,InstructionalDraft) and (set(review.pedagogy_checks)!=PEDAGOGY_CHECKS or len(review.pedagogy_checks)!=len(PEDAGOGY_CHECKS)):
+        raise ValueError('complete independent pedagogy comparison required')
     if (result['status']!='ready_for_content_review' or verify_draft(context,draft) or
             review.result_digest!=fingerprint(result) or review.decision!='accepted' or
             len(review.reviewed_ids)!=len(ids) or set(review.reviewed_ids)!=set(ids)):
@@ -649,7 +686,7 @@ def write_reading_bundle(result_path,review_path,files,section,question,output_d
     root=private_destination(Path(output_dir),[Path(p) for p in [result_path,review_path,*inputs]])
     bundle,assets=build_bundle(files,section,question)
     data=dict(generation=result,content_review=review.model_dump(mode='json'))
-    payloads={'lesson.json':encode(data),'index.html':render_lesson(result,review,bundle['title']),'study.json':encode(bundle),'source.html':render_source(bundle),**assets}
+    payloads={'lesson.json':encode(data),'index.html':render_lesson(result,review,bundle['title'],bundle),'study.json':encode(bundle),'source.html':render_source(bundle),**assets}
     payloads['manifest.json']=encode({'schema_version':'1','files':{k:sha(v) for k,v in payloads.items()}})
     final=root/('lesson-'+sha(payloads['lesson.json']))
     if final.exists() or final.is_symlink():
@@ -673,6 +710,7 @@ def main(argv=None):
     parser.add_argument('--mode',choices=['plan','live'],default='plan')
     for name in ['source','outline','review','section','output-dir','approval','expected-plan-sha256','budget-ledger','key-project-root']:
         parser.add_argument('--'+name)
+    parser.add_argument('--lesson-format',choices=['instructional_v1','summary_v1'],default='instructional_v1')
     parser.add_argument('--exclude-page',type=int,action='append',default=[])
     args=parser.parse_args(argv)
     try:
@@ -680,7 +718,7 @@ def main(argv=None):
             if not all([args.source,args.outline,args.review,args.section,args.output_dir,args.budget_ledger,args.key_project_root]): raise ValueError('explicit inputs and private output required')
             paths=[Path(p) for p in [args.source,args.outline,args.review]]
             root=private_destination(Path(args.output_dir),paths)
-            a=create_proposal(paths,args.section,args.exclude_page,output_dir=root,budget_ledger=Path(args.budget_ledger),key_project_root=Path(args.key_project_root))
+            a=create_proposal(paths,args.section,args.exclude_page,output_dir=root,budget_ledger=Path(args.budget_ledger),key_project_root=Path(args.key_project_root),lesson_format=args.lesson_format)
             root.mkdir(parents=True,exist_ok=True)
             path=root/('proposal-'+a.spec.run_id+'.json')
             with path.open('x') as stream: stream.write(a.model_dump_json(indent=2)+'\n')

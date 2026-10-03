@@ -6,7 +6,8 @@ import re
 from pathlib import Path
 from uuid import UUID
 
-from .lesson_generation import write_reading_bundle, fingerprint
+from .lesson_generation import write_reading_bundle, fingerprint,parse_draft
+from .instructional_lesson import InstructionalDraft,render_teaching,render_practice,place_materials
 from .notion_mcp import encode_text
 from .notion_bridge import page_body,separate_memo
 from .rag_files import load_review_files, read_json_input
@@ -54,13 +55,15 @@ def render_table(text):
     return '\n'.join([*parts,'</table>'])
 
 
-def render_sources(bundle, images):
+def render_sources(bundle, images, *, placed_pages=(), placed_fragments=()):
     parts=['## 원문 읽기',encode_text('아래 전사와 표·코드는 해당 원본 페이지와 함께 읽어주세요.')]
     fragments=bundle['fragments'];grouped={i for f in fragments for i in f['source_block_ids']}
     block_pages={entry['original']['block_id']:entry['original']['source']['page'] for entry in bundle['blocks']}
     for page in bundle['selected_source_pages']:
         binding=next(i for i in images if i.page==page)
-        parts += ['### 원본 p'+str(page),f'![원본 p{page}](file-upload://{binding.file_upload_id})']
+        parts += ['### 원본 p'+str(page)]
+        if page not in placed_pages:parts.append(f'![원본 p{page}](file-upload://{binding.file_upload_id})')
+        else:parts.append('원본 이미지는 위 설명 옆에 배치했습니다.')
         prose=[]
         for entry in bundle['blocks']:
             block=entry['original']
@@ -79,6 +82,7 @@ def render_sources(bundle, images):
                 prose.append(render_table('\n'.join(' | '.join(row) for row in block['cells'])))
         if prose:parts.append(toggle('p'+str(page)+' 원문 전사','\n'.join(prose)))
         for fragment in fragments:
+            if fragment['fragment_id'] in placed_fragments:continue
             pages=sorted({block_pages[i] for i in fragment['source_block_ids']})
             if page!=min(pages):continue
             status='원문과 대조한 자료' if fragment['status']=='confirmed' else '미확정 후보 · 원본 확인 필요'
@@ -87,6 +91,32 @@ def render_sources(bundle, images):
                      render_table(fragment['text']) if fragment['kind']=='table' else encode_text(fragment['text']))
             parts += ['#### '+encode_text(label),encode_text('출처: '+', '.join('p'+str(p) for p in pages)),content]
     return '\n\n'.join(parts)
+
+
+def render_instructional_notion(result,bundle,bindings,notes=()):
+    draft=parse_draft(result['draft'],'instructional_v1')
+    owners=place_materials(draft,result['context'],bundle)
+    placed_pages=set();placed_fragments=set()
+    def materials(u):
+        rows=[]
+        if owners[u.teaching_id]:rows+=['### 원본 자료']
+        for f,pages in owners[u.teaching_id]:
+            rows+=['출처: PDF '+', '.join('p'+str(p) for p in sorted(pages))]
+            if f['status']=='candidate':rows+=['미확정 코드 후보 · 원본에서 호출 흐름을 확인하세요. 실행 미검증.']
+            else:
+                rows += [
+                   '원문과 대조한 코드 · 실행 미검증' if f['kind']=='code' else '원문과 대조한 설정 표',
+                   fence(f['text'],'python') if f['kind']=='code' else render_table(f['text'])]
+                placed_fragments.add(f['fragment_id'])
+            for p in sorted(pages-placed_pages):
+                i=next(i for i in bindings if i.page==p)
+                rows.append(f'![원본 p{p}](file-upload://{i.file_upload_id})');placed_pages.add(p)
+        return rows
+    body=render_teaching(draft,result['context'],after_unit=materials)
+    if notes:body+='\n\n'+toggle('읽기 안내','\n'.join(encode_text(n) for n in notes))
+    body+='\n\n'+toggle('원본과 전사 · 필요할 때 펼치기',render_sources(bundle,bindings,
+                               placed_pages=placed_pages,placed_fragments=placed_fragments))
+    return body+'\n\n'+render_practice(draft)
 
 
 def confirm_lesson(packet, checkpoint, images):
@@ -113,7 +143,10 @@ def prepare_lesson(result_path, review_path, budget_path, question, reading_dir,
     # Reuse the source-image binding and complete hub checks from the source bridge.
     _,source_cp,bindings=prepare_study(files,result['context']['section_id'],question,hub_id,hub_packet,images)
     bundle,_=build_bundle(files,result['context']['section_id'],question)
-    content=render_generated(result,reviewed['content_review'])+'\n\n'+render_sources(bundle,bindings)
+    if isinstance(parse_draft(result['draft']),InstructionalDraft):
+        content=render_instructional_notion(result,bundle,bindings,reviewed['content_review'].get('notes',[]))
+    else:
+        content=render_generated(result,reviewed['content_review'])+'\n\n'+render_sources(bundle,bindings)
     key=fingerprint(['reviewed-model-notion-v2-readable',source_cp.operation_key,fingerprint(result),reviewed['content_review'],fingerprint(content)])
     canonical(content,bindings)
     complete_record(dict(metadata={'type':'page'},text='<page>\n<content>\n'+content+'\n</content>\n</page>'))

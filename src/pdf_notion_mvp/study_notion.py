@@ -148,17 +148,21 @@ def canonical(content, images, *, native_code_payload=False):
             if language=='plain text':language='text'
             output.append(['literal_code',prefix,language,'\n'.join(body)])
         else:
-            image=re.fullmatch(r'!\[원본 p(\d+)\]\((.+)\)',line)
+            image=re.fullmatch(r'(\t*)!\[원본 p(\d+)\]\((.+)\)',line)
             if image:
-                page=int(image[1]);binding=by_page.get(page)
+                prefix=image[1];page=int(image[2]);binding=by_page.get(page)
                 if binding is None or page in seen:raise ValueError('unknown or duplicate image')
-                url=image[2];parts=urlsplit(url)
+                url=image[3];parts=urlsplit(url)
                 if url.startswith('file-upload://'):
                     if UUID(url[len('file-upload://'):])!=binding.file_upload_id:raise ValueError('wrong upload')
                 elif not (parts.scheme=='https' and (parts.hostname or '').endswith(('.amazonaws.com','.notion.so','.notion-static.com')) and unquote(Path(parts.path).name)==binding.filename):
                     raise ValueError('unexpected uploaded image reference')
-                seen.add(page);output.append(['image',page,str(binding.file_upload_id)])
-            elif line.strip(): output.append(['markdown',decode_text(line)])
+                seen.add(page);output.append(['image',page,str(binding.file_upload_id)]+([prefix] if prefix else []))
+            elif line.strip():
+                # The native connector omits indentation on table-internal tags.
+                # Preserve the outer table's position and all cell content.
+                if re.match(r'^\t*</?(?:tr|td)(?:>|\s)',line):line=line.lstrip('\t')
+                output.append(['markdown',decode_text(line)])
         index+=1
     if seen!=set(by_page):raise ValueError('missing page images')
     return output

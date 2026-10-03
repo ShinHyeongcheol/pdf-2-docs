@@ -7,9 +7,12 @@
 
 2026-10-03 Mac 확인에서는 실제 162쪽 LangChain PDF의 전체 OCR/PNG와 원문 SHA를
 검증하고, Model 절의 기존 실제 생성 receipt·출처·독립 검수를 재사용했습니다.
-주제 3개·문제 4개와 원본 p.23–28 이미지 6장을 새 페이지에 게시한 뒤 완전한
-readback이 confirmed가 됐습니다. 합성 2쪽 PDF의 실제 생성·검수·게시도 별도로
-확인했습니다. 여기서 재사용에는 모델 호출이 없으며, 공개 테스트는 합성 HTTP입니다.
+대표 절의 첫 요약 게시를 확인한 뒤, 기존 좋은 교재의 설명을 재사용·편집하여
+Model을 정의·호출·설정/평가로 연결한 교재로 개선했습니다. 원본 p.23–28 이미지
+6장과 보충 도식, 메모를 보존하고 본문 전체를 다시 대조했습니다. 이 편집은
+검수된 기존 설명의 재사용이며 새 모델 생성 결과가 아닙니다. 합성 2쪽 PDF의 실제
+생성·검수·게시도 별도로 확인했습니다. 새 설명 계약은 SDK의 합성 HTTP 요청으로
+검증했으며, 새 스키마의 실제 Gemini 수용 여부는 아직 확인하지 않았습니다.
 비공개 실제 페이지 링크와 원장은 공개 저장소에 포함하지 않습니다.
 
 ## 1. 새 비공개 작업 폴더와 입력
@@ -135,7 +138,8 @@ PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.study_session generate \
 인용의 충분성·핵심 목표의 구분·누락·교정/표 관계를 확인하세요. 문자열 검사나
 같은 생성 모델의 자체 평가는 독립 검수가 아닙니다.
 `ContentReview` JSON의 result_digest는 `fingerprint(result)`이고, reviewed_ids에는
-주제 claim_id, question_id와 각 explanation.claim_id를 정확히 모두 넣습니다.
+정의·필요성·작동 원리·예시·자료 읽기·오해 설명·질문의 모든 검수 ID를 넣습니다.
+설명 중심 교재에서는 pedagogy_checks의 다섯 항목도 각각 실제로 검토해야 합니다.
 reviewer, decision(accepted 또는 needs_changes), notes도 필요합니다.
 검수가 끝나기 전에는 accepted로 표시하지 않습니다.
 
@@ -148,7 +152,8 @@ export PDF_STUDY_CONTENT_REVIEW="$PDF_STUDY_ROOT/content-review/review.json"
 PYTHONPATH=src .venv/bin/python - "$PDF_STUDY_RESULT" "$PDF_STUDY_CONTENT_REVIEW" <<'PY'
 import json, sys
 from pathlib import Path
-from pdf_notion_mvp.lesson_generation import ContentReview, fingerprint
+from pdf_notion_mvp.lesson_generation import ContentReview, fingerprint, parse_draft, draft_review_ids
+from pdf_notion_mvp.instructional_lesson import PEDAGOGY_CHECKS
 from pdf_notion_mvp.rag_files import read_json_input
 result = read_json_input(Path(sys.argv[1]), max_bytes=500000)
 review = ContentReview(result_digest=fingerprint(result), reviewed_ids=[],
@@ -156,10 +161,8 @@ review = ContentReview(result_digest=fingerprint(result), reviewed_ids=[],
 path = Path(sys.argv[2]); path.parent.mkdir(parents=True, exist_ok=True)
 with path.open("x", encoding="utf-8") as stream:
     stream.write(review.model_dump_json(indent=2) + "\n")
-ids = [c["claim_id"] for t in result["draft"]["topics"] for c in t["claims"]]
-ids += [q["question_id"] for q in result["draft"]["exercises"]]
-ids += [q["explanation"]["claim_id"] for q in result["draft"]["exercises"]]
-print(json.dumps({"ids_to_compare": ids, "review_template": str(path)}, ensure_ascii=False))
+ids = draft_review_ids(parse_draft(result["draft"]))
+print(json.dumps({"ids_to_compare": ids, "pedagogy_to_compare": sorted(PEDAGOGY_CHECKS), "review_template": str(path)}, ensure_ascii=False))
 PY
 ```
 
@@ -248,3 +251,29 @@ reading manifest 및 비공개 checkpoint에 그대로 남습니다. 원격 재�
 첫 생성 뒤 `bind`는 필수입니다. 이전 형식의 confirmed checkpoint는 보존하고,
 형식 변경은 해당 페이지에 대한 별도 명시적 편집과 새 검증 기록으로 처리합니다.
 새 checkpoint나 새 폴더를 만들어 기존 페이지를 자동 재생성하지 않습니다.
+
+
+## 설명 중심 교재의 기본 계약
+
+새 `study_session prepare`와 `lesson_generation --mode plan`의 기본 형식은
+`instructional_v1`입니다. 묶인 학습 단원마다 정의 → 필요성 → 작동 원리 →
+입력·기대 결과·해석이 있는 가상 예시 → 오해하기 쉬운 점을 본문에 연결합니다.
+문제는 맨 뒤의 짧은 이유·적용 질문입니다. 원문 전사와 감사 기록은 보조 자료입니다.
+확정 코드·표는 가까운 단원에 원본 이미지와 함께 배치합니다. 이 자동 배치가
+의미상 적절한지는 검토자가 확인해야 하며, 미확정 코드는 본문에서 원본 이미지로
+확인하고 후보 전사는 접힌 보조 자료에 보존합니다. 코드 실행은 검증하지 않습니다.
+
+모든 제공 근거가 본문 검수 대상에 포함되어야 합니다. 이는 인용/범위 검사이며,
+설명의 충분성이나 기술적 사실을 자동 검증하지 않습니다. 독립 검토자는 결과 ID뿐
+아니라 `concept_coverage`, `connected_explanation`, `worked_examples`,
+`source_and_supplement_labels`, `code_and_visual_interpretation`도 실제로 대조한 뒤
+`pedagogy_checks`에 기록합니다. 비어 있거나 누락되면 게시 준비가 차단됩니다.
+특히 Model 절에서는 Runnable/Chain, Chat/Completion, 초기화/호출/응답, 동기·비동기,
+파라미터, 모델 교체, 캐싱·재시도를 본문에서 설명하는지 직접 확인하세요.
+
+과거 `summary_v1` receipt와 요청 지문은 유지합니다. 과거 세션의 plan/캐시 재사용은
+자동으로 새 형식으로 바뀌지 않습니다. 기존 짧은 요약을 새 설명 중심 결과로
+간주하지 않습니다. 짧은 요약을 의도한 새 실험에만 `--lesson-format summary_v1`을
+명시하세요. 형식 변경은 새 요청 지문과 별도 승인 대상이며, 기존 호출 한도·비용
+상한·이미지 전송 금지·무재시도 정책은 그대로 적용됩니다. 가상 예시는 학습용으로
+표시하며 새 API/성능/외부 사실은 만들어 넣지 않습니다.

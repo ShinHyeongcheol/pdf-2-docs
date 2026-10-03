@@ -22,7 +22,7 @@ def reviewed(inputs,tmp_path):
     source['document']['blocks'].append(second);paths[0].write_text(json.dumps(source))
     outline=json.loads(paths[1].read_text());outline['nodes'][-1]['block_ids'].append(second['block_id']);paths[1].write_text(json.dumps(outline))
     layer=json.loads(paths[2].read_text());layer['source_digest']=document_digest(FixtureInput.model_validate(source).document);paths[2].write_text(json.dumps(layer))
-    a=create_proposal(paths,'unit.part',output_dir=tmp_path/'results',budget_ledger=tmp_path/'ledger/budget.sqlite',key_project_root=ROOT,now=NOW)
+    a=create_proposal(paths,'unit.part',lesson_format='summary_v1',output_dir=tmp_path/'results',budget_ledger=tmp_path/'ledger/budget.sqlite',key_project_root=ROOT,now=NOW)
     for name in ['user_approved','data_transfer_confirmed','budget_confirmed','pricing_capabilities_confirmed']:setattr(a,name,True)
     seen=[];result,_=run(tmp_path,a,seen)
     ids=[c['claim_id'] for t in result['draft']['topics'] for c in t['claims']]
