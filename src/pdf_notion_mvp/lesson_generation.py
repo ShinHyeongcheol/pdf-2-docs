@@ -29,6 +29,7 @@ from .study_bundle import build_bundle, check_existing, encode, private_destinat
 
 from .instructional_lesson import (INSTRUCTIONAL_PROMPT, InstructionalDraft, PEDAGOGY_CHECKS,
     verify_instructional, review_ids as instructional_review_ids, render_instructional_html,unit_claims)
+from .teaching_plan import attach_plan,prose_schema,bind_prose,PROSE_PROMPT
 
 COST_MICRO_USD = 360448
 BUDGET_MICRO_USD = 10000000
@@ -107,9 +108,13 @@ class LessonSpec(Contract):
     lesson_format: Literal['summary_v1','instructional_v1'] = 'summary_v1'
     free_ledger: str | None = None
     free_tier_evidence: FreeTierEvidence | None = None
+    teaching_plan_path: str | None = None
+    teaching_plan_sha256: str | None = None
 
     @model_validator(mode='after')
     def billing_policy(self):
+        if bool(self.teaching_plan_path)!=bool(self.teaching_plan_sha256) or (self.teaching_plan_path and self.lesson_format!='instructional_v1'):
+            raise ValueError('instructional teaching plan binding required')
         if self.billing_mode=='paid_reservation':
             if self.conditional_cost_micro_usd!=COST_MICRO_USD or self.free_ledger is not None or self.free_tier_evidence is not None:
                 raise ValueError('paid policy cannot waive reservations')
@@ -121,6 +126,8 @@ class LessonSpec(Contract):
     @model_serializer(mode='wrap')
     def serialize_policy(self, handler):
         data=handler(self)
+        if self.teaching_plan_path is None:
+            data.pop('teaching_plan_path',None);data.pop('teaching_plan_sha256',None)
         # Preserve historical approval/session fingerprints exactly.
         if self.lesson_format=='summary_v1':data.pop('lesson_format',None)
         if self.billing_mode=='paid_reservation':
@@ -171,11 +178,13 @@ def messages(context,lesson_format='summary_v1'):
     payload={'untrusted_evidence':context}
     if lesson_format=='instructional_v1':
         payload['required_main_teaching_unit_ids']=[u['unit_id'] for u in context['units']]
-    return [SystemMessage(content=INSTRUCTIONAL_PROMPT if lesson_format=='instructional_v1' else PROMPT), HumanMessage(content=json.dumps(payload,ensure_ascii=False))]
+    prompt=PROSE_PROMPT if 'teaching_plan' in context else INSTRUCTIONAL_PROMPT if lesson_format=='instructional_v1' else PROMPT
+    return [SystemMessage(content=prompt), HumanMessage(content=json.dumps(payload,ensure_ascii=False))]
 
 
-def wire_schema(lesson_format='summary_v1'):
+def wire_schema(lesson_format='summary_v1',context=None):
     """Provider-compatible schema; all count and string bounds are enforced locally."""
+    if context is not None and 'teaching_plan' in context:return prose_schema(context)
     def trim(value):
         if isinstance(value, dict):
             trimmed = {k:({name:trim(schema) for name,schema in v.items()}
@@ -212,7 +221,7 @@ def expected_request(context,lesson_format='summary_v1'):
     return {'contents':[{'parts':[{'text':msgs[1].content}],'role':'user'}],
             'systemInstruction':{'parts':[{'text':msgs[0].content}]}, 'safetySettings':[],
             'generationConfig':{'candidateCount':1,'maxOutputTokens':8192,
-                                'responseMimeType':'application/json','responseJsonSchema':wire_schema(lesson_format)}}
+                                'responseMimeType':'application/json','responseJsonSchema':wire_schema(lesson_format,context)}}
 
 
 def parse_draft(packet,lesson_format=None):
@@ -260,10 +269,22 @@ def _inputs(spec):
     files = load_review_files(*paths, [], paths[0].parent/'unused-lesson-result.json')
     if [sha(p.read_bytes()) for p in paths] != spec.input_sha256:
         raise ValueError('source inputs changed')
-    return files, units_for(files,spec.section_id,spec.exclude_pages)
+    return files, context_with_plan(units_for(files,spec.section_id,spec.exclude_pages),spec.teaching_plan_path,spec.teaching_plan_sha256)
 
 
-def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1'):
+def context_with_plan(context,path=None,digest=None):
+    if path is None:
+        if digest is not None:raise ValueError('teaching plan binding missing')
+        return context
+    path=Path(path)
+    if not path.is_absolute():raise ValueError('absolute teaching plan path required')
+    _regular(path)
+    packet=read_json_input(path,max_bytes=100000)
+    if digest is not None and sha(path.read_bytes())!=digest:raise ValueError('reviewed teaching plan changed')
+    return attach_plan(context,packet)
+
+
+def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None,lesson_format='instructional_v1',teaching_plan_path=None):
     now = now or datetime.now(timezone.utc)
     paths=[Path(p) for p in paths]
     output=private_destination(Path(output_dir),paths)
@@ -273,6 +294,10 @@ def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,ke
     if not key_root.is_absolute() or key_root.is_symlink() or any(p.is_symlink() for p in key_root.parents): raise ValueError('explicit regular key project root required')
     files=load_review_files(*paths,[],paths[0].parent/'unused-lesson-result.json')
     context=units_for(files,section,list(exclude_pages))
+    plan_fields={}
+    if teaching_plan_path is not None:
+        context=context_with_plan(context,teaching_plan_path)
+        plan_fields=dict(teaching_plan_path=str(Path(teaching_plan_path).resolve()),teaching_plan_sha256=sha(Path(teaching_plan_path).read_bytes()))
     request=expected_request(context,lesson_format)
     if len(encode(request))>100000: raise ValueError('request byte limit exceeded')
     free_fields={}
@@ -288,7 +313,7 @@ def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,ke
         model_snapshot=ModelSnapshot(),input_paths=[str(p.resolve()) for p in paths],
         input_sha256=[sha(p.read_bytes()) for p in paths],section_id=section,exclude_pages=list(exclude_pages),
         output_dir=str(output),budget_ledger=str(budget.resolve()),key_project_root=str(key_root.resolve()),
-        context_digest=fingerprint(context),request_digest=fingerprint(request),lesson_format=lesson_format,**free_fields)
+        context_digest=fingerprint(context),request_digest=fingerprint(request),lesson_format=lesson_format,**free_fields,**plan_fields)
     return LessonApproval(spec=spec,plan_sha256=fingerprint(spec.model_dump(mode='json')))
 
 
@@ -511,14 +536,14 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             max_output_tokens=8192,client_args={'trust_env':False,'event_hooks':{'request':[guard],'response':[preserve_response]}})
         try:
             with tracing_context(enabled=False):
-                packet=client.with_structured_output(wire_schema(a.spec.lesson_format),method='json_schema',include_raw=True).invoke(messages(context,a.spec.lesson_format))
+                packet=client.with_structured_output(wire_schema(a.spec.lesson_format,context),method='json_schema',include_raw=True).invoke(messages(context,a.spec.lesson_format))
         finally:
             sdk=getattr(client,'client',None)
             if sdk is not None: sdk.close()
         if (requests!=1 or packet.get('parsing_error') or packet.get('parsed') is None
                 or getattr(packet['raw'],'response_metadata',{}).get('finish_reason')!='STOP'):
             raise ValueError('incomplete model response')
-        draft=parse_draft(packet['parsed'],a.spec.lesson_format)
+        draft=bind_prose(context,packet['parsed']) if 'teaching_plan' in context else parse_draft(packet['parsed'],a.spec.lesson_format)
         errors=verify_draft(context,draft)
         usage=getattr(packet['raw'],'usage_metadata',None) or {}
         tokens={k:usage[k] for k in ['input_tokens','output_tokens','total_tokens'] if type(usage.get(k)) is int and usage[k]>=0}
@@ -537,6 +562,9 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             free_tier_evidence_digest=fingerprint(a.spec.free_tier_evidence.model_dump(mode='json')) if a.spec.free_tier_evidence else None,
             human_review_required=True,semantic_correctness_verified=False)
         if a.spec.lesson_format=='instructional_v1':result['lesson_format']=a.spec.lesson_format
+        if a.spec.teaching_plan_path:
+            result.update(teaching_plan_path=a.spec.teaching_plan_path,teaching_plan_sha256=a.spec.teaching_plan_sha256,
+                          generation_stages=['reviewed_evidence_plan','model_prose','deterministic_binding','independent_review_required'])
         root.mkdir(parents=True,exist_ok=True)
         with result_path.open('x',encoding='utf-8') as stream:
             stream.write(json.dumps(result,ensure_ascii=False,indent=2)+'\n'); stream.flush(); os.fsync(stream.fileno())
@@ -559,7 +587,7 @@ def recover_positional_ids(result_path, *, budget_path):
         raise ValueError('only duplicate claim IDs are recoverable')
     inputs=[Path(p) for p in original['input_paths']]
     files=load_review_files(*inputs,[],source.parent/'unused-lesson-result.json')
-    context=units_for(files,original['context']['section_id'],original['excluded_pages'])
+    context=context_with_plan(units_for(files,original['context']['section_id'],original['excluded_pages']),original.get('teaching_plan_path'),original.get('teaching_plan_sha256'))
     if (context!=original['context'] or fingerprint(context)!=original['context_digest'] or
             [sha(p.read_bytes()) for p in inputs]!=original['input_sha256']):
         raise ValueError('recovery source inputs changed')
@@ -678,7 +706,7 @@ def write_reading_bundle(result_path,review_path,files,section,question,output_d
     if any(getattr(files,k).model_dump_json()!=getattr(authoritative,k).model_dump_json() for k in ['source','hierarchy','review']) or files.asset_root!=authoritative.asset_root or files.bindings:
         raise ValueError('supplied source/review differs from authoritative input files')
     files=authoritative
-    context=units_for(files,section,pages)
+    context=context_with_plan(units_for(files,section,pages),result.get('teaching_plan_path'),result.get('teaching_plan_sha256'))
     if fingerprint(context)!=result['context_digest'] or context!=result['context']:
         raise ValueError('current source context differs')
     draft=parse_draft(result['draft'],result.get('lesson_format','summary_v1'))
@@ -719,6 +747,7 @@ def main(argv=None):
     for name in ['source','outline','review','section','output-dir','approval','expected-plan-sha256','budget-ledger','key-project-root']:
         parser.add_argument('--'+name)
     parser.add_argument('--lesson-format',choices=['instructional_v1','summary_v1'],default='instructional_v1')
+    parser.add_argument('--teaching-plan',type=Path)
     parser.add_argument('--exclude-page',type=int,action='append',default=[])
     args=parser.parse_args(argv)
     try:
@@ -726,7 +755,7 @@ def main(argv=None):
             if not all([args.source,args.outline,args.review,args.section,args.output_dir,args.budget_ledger,args.key_project_root]): raise ValueError('explicit inputs and private output required')
             paths=[Path(p) for p in [args.source,args.outline,args.review]]
             root=private_destination(Path(args.output_dir),paths)
-            a=create_proposal(paths,args.section,args.exclude_page,output_dir=root,budget_ledger=Path(args.budget_ledger),key_project_root=Path(args.key_project_root),lesson_format=args.lesson_format)
+            a=create_proposal(paths,args.section,args.exclude_page,output_dir=root,budget_ledger=Path(args.budget_ledger),key_project_root=Path(args.key_project_root),lesson_format=args.lesson_format,teaching_plan_path=args.teaching_plan)
             root.mkdir(parents=True,exist_ok=True)
             path=root/('proposal-'+a.spec.run_id+'.json')
             with path.open('x') as stream: stream.write(a.model_dump_json(indent=2)+'\n')

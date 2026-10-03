@@ -116,6 +116,7 @@ def review_ids(draft):
 
 def verify_instructional(context, draft):
     units = {u['unit_id']: u['text'] for u in context['units']}
+    evidence=dict(units,**{u['unit_id']:u['text'] for u in context.get('supplements',[])})
     errors=[]; coverage=set(); ids=review_ids(draft)
     if len(ids)!=len(set(ids)):errors.append('duplicate_instructional_id')
     for u in draft.teaching_units:
@@ -129,7 +130,7 @@ def verify_instructional(context, draft):
     for claim in claims:
         if not claim.text.strip():errors.append('empty_claim')
         for citation in claim.citations:
-            if not citation.quote.strip() or citation.quote not in units.get(citation.unit_id,''):
+            if not citation.quote.strip() or citation.quote not in evidence.get(citation.unit_id,''):
                 errors.append('unsupported_citation')
     plain=[draft.title,draft.introduction,*draft.objectives]
     plain += [v for u in draft.teaching_units for v in [u.title,u.example.input,u.example.expected_output]]
@@ -147,15 +148,35 @@ def teaching_pages(context, unit):
     return sorted({s['source']['page'] for i in unit.covered_unit_ids for s in units[i]['sources']})
 
 
+def claim_text(context,claim):
+    supplements={s['unit_id']:s for s in context.get('supplements',[])}
+    used=sorted({c.unit_id for c in claim.citations}&supplements.keys())
+    if not used:return claim.text
+    return claim.text+'\n\n공식 문서로 보충한 설명'
+
+
+def supplement_references(context,claims):
+    supplements={s['unit_id']:s for s in context.get('supplements',[])}
+    used=sorted({c.unit_id for claim in claims for c in claim.citations}&supplements.keys())
+    return [supplements[i] for i in used]
+
+
+def reference_text(record):
+    return record['title']+' ('+', '.join([record['url'],*record.get('supporting_urls',[])])+')'
+
+
 def place_materials(draft,context,bundle):
     """A deterministic presentation hint; reviewers must check the association."""
     by_block={e['original']['block_id']:e['original']['source']['page'] for e in bundle['blocks']}
     owners={u.teaching_id:[] for u in draft.teaching_units}
+    planned_pages={u['teaching_id']:set(u.get('material_pages',[])) for u in context.get('teaching_plan',{}).get('units',[])}
     for fragment in bundle['fragments']:
         if fragment['kind'] not in {'table','code'}:continue
         if fragment['kind']=='table' and fragment['status']!='confirmed':continue
         pages={by_block[i] for i in fragment['source_block_ids']}
-        u=min(draft.teaching_units,key=lambda u:min(abs(p-q) for p in pages for q in teaching_pages(context,u)))
+        matches=[u for u in draft.teaching_units if pages&planned_pages.get(u.teaching_id,set())]
+        if len(matches)>1:raise ValueError('ambiguous reviewed material placement')
+        u=matches[0] if matches else min(draft.teaching_units,key=lambda u:min(abs(p-q) for p in pages for q in teaching_pages(context,u)))
         owners[u.teaching_id].append((fragment,pages))
     return owners
 
@@ -164,23 +185,27 @@ def render_teaching(draft, context, *, after_unit=None):
     parts=['# '+encode_text(draft.title),encode_text(draft.introduction),'## 이 절에서 배울 것']
     parts += ['- '+encode_text(v) for v in draft.objectives]
     for index,u in enumerate(draft.teaching_units,1):
-        parts += ['## '+str(index)+'. '+encode_text(u.title),encode_text(u.definition.text),
-                  encode_text(u.purpose.text),*[encode_text(p.text) for p in u.mechanism],
+        parts += ['## '+str(index)+'. '+encode_text(u.title),encode_text(claim_text(context,u.definition)),
+                  encode_text(claim_text(context,u.purpose)),*[encode_text(claim_text(context,p)) for p in u.mechanism],
                   '### 하나의 사례로 이해하기', '학습용 가상 예시 · 실제 생성·측정 결과가 아닙니다.',
                   '**입력:** '+encode_text(u.example.input),
                   '**기대 결과:** '+encode_text(u.example.expected_output),
-                  encode_text(u.example.interpretation.text),'### 헷갈리기 쉬운 점',
-                  encode_text(u.misconception.text),
-                  '### 원문과 설명 맞춰 읽기',encode_text(u.material_reading.text),
+                  encode_text(claim_text(context,u.example.interpretation)),'### 헷갈리기 쉬운 점',
+                  encode_text(claim_text(context,u.misconception)),
+                  '### 원문과 설명 맞춰 읽기',encode_text(claim_text(context,u.material_reading)),
                   '출처: PDF '+', '.join('p'+str(p) for p in teaching_pages(context,u))]
+        refs=supplement_references(context,unit_claims(u))
+        if refs:parts+=['보충 출처: '+' · '.join(encode_text(reference_text(r)) for r in refs)]
         if after_unit:parts.extend(after_unit(u))
     return '\n\n'.join(parts)
 
 
-def render_practice(draft):
+def render_practice(draft,context=None):
     parts=['## 스스로 설명해 보기','먼저 이유를 설명한 뒤 해설과 대조해 보세요.']
     for i,q in enumerate(draft.exercises,1):
-        parts += ['### 질문 '+str(i),encode_text(q.question),toggle('해설',encode_text(q.answer.text))]
+        parts += ['### 질문 '+str(i),encode_text(q.question),toggle('해설',encode_text(claim_text(context or {},q.answer)))]
+        refs=supplement_references(context or {},[q.answer])
+        if refs:parts+=['보충 출처: '+' · '.join(encode_text(reference_text(r)) for r in refs)]
     return '\n\n'.join(parts)
 
 
@@ -195,12 +220,14 @@ def render_instructional_html(draft,context,title,bundle,notes=()):
            *['<li>'+esc(v)+'</li>' for v in draft.objectives],'</ul>']
     for u in draft.teaching_units:
         parts+=['<section><h2>'+esc(u.title)+'</h2>',
-                *['<p>'+esc(c.text)+'</p>' for c in [u.definition,u.purpose,*u.mechanism]],
+                *['<p>'+esc(claim_text(context,c))+'</p>' for c in [u.definition,u.purpose,*u.mechanism]],
                 '<aside><p>학습용 가상 예시 · 실제 생성 결과 아님</p><p>입력: '+esc(u.example.input)+'</p>',
-                '<p>기대 결과: '+esc(u.example.expected_output)+'</p><p>'+esc(u.example.interpretation.text)+'</p></aside>',
-                '<h3>헷갈리기 쉬운 점</h3><p>'+esc(u.misconception.text)+'</p>',
-                '<h3>원문과 설명 맞춰 읽기</h3><p>'+esc(u.material_reading.text)+'</p><p>출처: '+
+                '<p>기대 결과: '+esc(u.example.expected_output)+'</p><p>'+esc(claim_text(context,u.example.interpretation))+'</p></aside>',
+                '<h3>헷갈리기 쉬운 점</h3><p>'+esc(claim_text(context,u.misconception))+'</p>',
+                '<h3>원문과 설명 맞춰 읽기</h3><p>'+esc(claim_text(context,u.material_reading))+'</p><p>출처: '+
                 ', '.join('PDF p'+str(p) for p in teaching_pages(context,u))+'</p>']
+        refs=supplement_references(context,unit_claims(u))
+        if refs:parts+=['<p>보충 출처: '+esc(' · '.join(reference_text(r) for r in refs))+'</p>']
         if owners[u.teaching_id]:parts+=['<h3>원본 자료</h3>']
         for f,pages in owners[u.teaching_id]:
             parts+=['<p>출처: '+', '.join('PDF p'+str(p) for p in sorted(pages))+'</p>']
@@ -220,5 +247,5 @@ def render_instructional_html(draft,context,title,bundle,notes=()):
     if notes:parts+=['<details><summary>읽기 안내</summary>',*['<p>'+esc(n)+'</p>' for n in notes],'</details>']
     parts+=['<details><summary>원본·교정 자료</summary><a href="source.html">원본과 코드·표 확인</a></details>',
             '<h2>스스로 설명해 보기</h2>']
-    for q in draft.exercises:parts+=['<p>'+esc(q.question)+'</p><details><summary>해설</summary><p>'+esc(q.answer.text)+'</p></details>']
+    for q in draft.exercises:parts+=['<p>'+esc(q.question)+'</p><details><summary>해설</summary><p>'+esc(claim_text(context,q.answer))+'</p></details>']
     return '\n'.join([*parts,'</body></html>']).encode()
