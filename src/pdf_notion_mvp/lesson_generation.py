@@ -28,7 +28,7 @@ from .rag_files import load_review_files, read_json_input
 from .study_bundle import build_bundle, check_existing, encode, private_destination, sha, render as render_source
 
 from .instructional_lesson import (INSTRUCTIONAL_PROMPT, InstructionalDraft, PEDAGOGY_CHECKS,
-    verify_instructional, review_ids as instructional_review_ids, render_instructional_html)
+    verify_instructional, review_ids as instructional_review_ids, render_instructional_html,unit_claims)
 
 COST_MICRO_USD = 360448
 BUDGET_MICRO_USD = 10000000
@@ -546,7 +546,8 @@ def recover_positional_ids(result_path, *, budget_path):
     """Offline recovery for duplicate IDs only; preserve provider text and original file."""
     source=Path(result_path); _regular(source)
     original=read_json_input(source,max_bytes=500000)
-    if original['status']!='failed_content_validation' or original['errors']!=['duplicate_claim_id']:
+    expected_error=('duplicate_instructional_id' if original.get('lesson_format')=='instructional_v1' else 'duplicate_claim_id')
+    if original['status']!='failed_content_validation' or original['errors']!=[expected_error]:
         raise ValueError('only duplicate claim IDs are recoverable')
     inputs=[Path(p) for p in original['input_paths']]
     files=load_review_files(*inputs,[],source.parent/'unused-lesson-result.json')
@@ -554,11 +555,18 @@ def recover_positional_ids(result_path, *, budget_path):
     if (context!=original['context'] or fingerprint(context)!=original['context_digest'] or
             [sha(p.read_bytes()) for p in inputs]!=original['input_sha256']):
         raise ValueError('recovery source inputs changed')
-    draft=LessonDraft.model_validate(original['draft'])
-    if verify_draft(context,draft)!=['duplicate_claim_id']:
+    draft=parse_draft(original['draft'],original.get('lesson_format','summary_v1'))
+    if verify_draft(context,draft)!=[expected_error]:
         raise ValueError('recovery requires otherwise valid content')
     changes=[]
-    claims=[c for t in draft.topics for c in t.claims]+[q.explanation for q in draft.exercises]
+    if isinstance(draft,InstructionalDraft):
+        for i,u in enumerate(draft.teaching_units,1):
+            new_id=f'lesson-teaching-{i:04d}'
+            changes.append(dict(position=f'teaching:{i}',before=u.teaching_id,after=new_id));u.teaching_id=new_id
+            new_id=f'lesson-example-{i:04d}'
+            changes.append(dict(position=f'example:{i}',before=u.example.example_id,after=new_id));u.example.example_id=new_id
+        claims=[c for u in draft.teaching_units for c in unit_claims(u)]+[q.answer for q in draft.exercises]
+    else:claims=[c for t in draft.topics for c in t.claims]+[q.explanation for q in draft.exercises]
     for i,c in enumerate(claims,1):
         new_id=f'lesson-claim-{i:04d}'
         changes.append(dict(position=f'claim:{i}',before=c.claim_id,after=new_id)); c.claim_id=new_id
@@ -612,7 +620,7 @@ class ContentReview(Contract):
 def render_lesson(result,review,title='Model',bundle=None):
     if result.get('lesson_format')=='instructional_v1':
         if bundle is None:raise ValueError('instructional source bundle required')
-        return render_instructional_html(parse_draft(result['draft'],'instructional_v1'),result['context'],title,bundle)
+        return render_instructional_html(parse_draft(result['draft'],'instructional_v1'),result['context'],title,bundle,review.notes)
     esc=lambda s:html.escape(str(s),quote=True)
     units={u['unit_id']:u for u in result['context']['units']}
     def refs(citations):

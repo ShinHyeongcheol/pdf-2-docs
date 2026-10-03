@@ -8,9 +8,9 @@ import pytest
 from pydantic import ValidationError
 
 from pdf_notion_mvp.instructional_lesson import (InstructionalDraft, PEDAGOGY_CHECKS,
-    review_ids, verify_instructional)
+    review_ids, verify_instructional,render_teaching,render_instructional_html)
 from pdf_notion_mvp.lesson_generation import (ContentReview, create_proposal,execute,
-    expected_request,fingerprint,units_for,wire_schema,write_reading_bundle)
+    expected_request,fingerprint,units_for,wire_schema,parse_draft,recover_positional_ids)
 from pdf_notion_mvp.lesson_notion import prepare_lesson
 from pdf_notion_mvp.study_notion import canonical,UploadedPageImage
 from pdf_notion_mvp.rag_files import load_review_files
@@ -59,6 +59,23 @@ def test_coverage_must_be_in_main_teaching_not_only_an_exercise(inputs,tmp_path)
     assert 'unsupported_citation' in verify_instructional(context,draft)
 
 
+def test_evidence_in_material_reading_stays_visible_without_table_or_code(inputs,tmp_path):
+    paths,a=inputs;files=load_review_files(*paths,[],tmp_path/'unused.json');context=units_for(files,a.spec.section_id,[])
+    context=copy.deepcopy(context)
+    context['units'].append(dict(unit_id='authored:material-guidance',
+        text='표가 없는 절도 원문 대조 설명을 본문에 포함합니다.',sources=[dict(source=dict(page=1))]))
+    draft=teaching(context);guidance=draft.teaching_units[0].material_reading
+    assert len(context['units'])>1
+    from pdf_notion_mvp.instructional_lesson import unit_claims
+    for claim in unit_claims(draft.teaching_units[0]):
+        if claim is not guidance:claim.citations=claim.citations[:1]
+    guidance.text='이 원문 설명은 표와 코드가 없는 경우에도 본문에서 읽을 수 있어야 합니다.'
+    assert not verify_instructional(context,draft)
+    notion=render_teaching(draft,context)
+    html=render_instructional_html(draft,context,'합성',{'fragments':[],'blocks':[],'original_pages':[]}).decode()
+    assert guidance.text in notion and guidance.text in html
+
+
 def test_new_session_default_is_instructional_and_legacy_replay_is_explicit(inputs,tmp_path):
     paths,a=inputs;outline=json.loads(paths[1].read_text())
     for n in outline['nodes']:n['review_status']='confirmed'
@@ -96,10 +113,12 @@ def test_folded_originals_and_native_table_spacing_preserve_structure():
     assert canonical(expected,[binding])!=canonical(moved,[binding],native_code_payload=True)
 
 
-def test_instructional_sdk_review_publication_and_repeat(reviewed,tmp_path):
+@pytest.mark.parametrize('repair_ids',[False,True])
+def test_instructional_sdk_review_publication_and_repeat(reviewed,tmp_path,repair_ids):
     args,legacy,legacy_seen=reviewed
     files=load_review_files(*map(Path,legacy['input_paths']),[],tmp_path/'unused.json')
     context=units_for(files,legacy['context']['section_id'],[]);draft=teaching(context);seen=[]
+    if repair_ids:draft.teaching_units[0].purpose.claim_id=draft.teaching_units[0].definition.claim_id
     proposal=create_proposal(legacy['input_paths'],context['section_id'],output_dir=tmp_path/'teaching-result',
         budget_ledger=args[2],key_project_root=ROOT,now=NOW)
     assert proposal.spec.lesson_format=='instructional_v1'
@@ -115,14 +134,25 @@ def test_instructional_sdk_review_publication_and_repeat(reviewed,tmp_path):
     result,status=execute(proposal,proposal.plan_sha256,args[2],tmp_path/'teaching-result',ROOT,
         client_factory=build,key_provider=lambda:'fabricated-private-key',now=NOW)
     assert status=='written' and result['lesson_format']=='instructional_v1'
+    result_path=tmp_path/'teaching-result'/(result['operation_key']+'.json')
+    if repair_ids:
+        assert result['errors']==['duplicate_instructional_id']
+        original_bytes=result_path.read_bytes()
+        with pytest.raises(ValueError,match='no automatic retry'):
+            execute(proposal,proposal.plan_sha256,args[2],tmp_path/'teaching-result',ROOT,
+                key_provider=lambda:pytest.fail('failed-run retry key'),now=NOW)
+        result,status=recover_positional_ids(result_path,budget_path=args[2])
+        assert status=='written' and result_path.read_bytes()==original_bytes
+        assert result['id_recovery']['text_and_citations_changed'] is False
+        assert recover_positional_ids(result_path,budget_path=args[2])==(result,'unchanged')
+        draft=parse_draft(result['draft']);result_path=result_path.with_name(result['operation_key']+'-ids.json')
     assert result['status']=='ready_for_content_review' and len(seen)==1
     assert json.loads(seen[0].content)==expected_request(context,'instructional_v1')
     assert not result['images_transmitted']
     assert execute(proposal,proposal.plan_sha256,args[2],tmp_path/'teaching-result',ROOT,
         key_provider=lambda:pytest.fail('repeat key lookup'),now=NOW)==(result,'unchanged')
-    result_path=tmp_path/'teaching-result'/(result['operation_key']+'.json')
     review=ContentReview(result_digest=fingerprint(result),reviewed_ids=review_ids(draft),reviewer='independent synthetic fixture',
-        decision='accepted',notes=[])
+        decision='accepted',notes=['이 합성 자료는 코드 실행 능력을 검증한 결과가 아닙니다.'])
     args[0]=result_path;args[1]=tmp_path/'teaching-review/review.json';args[4]=tmp_path/'teaching-reading'
     args[1].parent.mkdir()
     args[1].write_text(review.model_dump_json())
@@ -131,9 +161,10 @@ def test_instructional_sdk_review_publication_and_repeat(reviewed,tmp_path):
     action,cp,bindings,final=prepare_lesson(*args)
     body=action['pages'][0]['content']
     assert '학습용 가상 예시' in body and '### 헷갈리기 쉬운 점' in body
-    assert body.index('원본 자료와 설명 맞춰 읽기')<body.index('```python')<body.index('원본과 전사')<body.index('스스로 설명해 보기')
+    assert body.index(draft.teaching_units[0].material_reading.text)<body.index('```python')<body.index('원본과 전사')<body.index('스스로 설명해 보기')
     assert body.count('![원본 p')==2 and '```json' not in body and '<summary>원문 근거' not in body
     assert '성공 결과를 재사용하면' in (final/'index.html').read_text()
+    assert review.notes[0] in body and review.notes[0] in (final/'index.html').read_text()
     cp=cp.model_copy(update={'page_id':PAGE});fetched=remote(cp,bindings)
     repeated=prepare_lesson(*args,checkpoint=cp,remote_packet=fetched)
     assert repeated[0] is None and repeated[1].status=='confirmed' and len(seen)==1

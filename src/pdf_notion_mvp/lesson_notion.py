@@ -93,13 +93,13 @@ def render_sources(bundle, images, *, placed_pages=(), placed_fragments=()):
     return '\n\n'.join(parts)
 
 
-def render_instructional_notion(result,bundle,bindings):
+def render_instructional_notion(result,bundle,bindings,notes=()):
     draft=parse_draft(result['draft'],'instructional_v1')
     owners=place_materials(draft,result['context'],bundle)
     placed_pages=set();placed_fragments=set()
     def materials(u):
         rows=[]
-        if owners[u.teaching_id]:rows+=['### 원본 자료와 설명 맞춰 읽기',encode_text(u.material_reading.text)]
+        if owners[u.teaching_id]:rows+=['### 원본 자료']
         for f,pages in owners[u.teaching_id]:
             rows+=['출처: PDF '+', '.join('p'+str(p) for p in sorted(pages))]
             if f['status']=='candidate':rows+=['미확정 코드 후보 · 원본에서 호출 흐름을 확인하세요. 실행 미검증.']
@@ -113,6 +113,7 @@ def render_instructional_notion(result,bundle,bindings):
                 rows.append(f'![원본 p{p}](file-upload://{i.file_upload_id})');placed_pages.add(p)
         return rows
     body=render_teaching(draft,result['context'],after_unit=materials)
+    if notes:body+='\n\n'+toggle('읽기 안내','\n'.join(encode_text(n) for n in notes))
     body+='\n\n'+toggle('원본과 전사 · 필요할 때 펼치기',render_sources(bundle,bindings,
                                placed_pages=placed_pages,placed_fragments=placed_fragments))
     return body+'\n\n'+render_practice(draft)
@@ -143,7 +144,7 @@ def prepare_lesson(result_path, review_path, budget_path, question, reading_dir,
     _,source_cp,bindings=prepare_study(files,result['context']['section_id'],question,hub_id,hub_packet,images)
     bundle,_=build_bundle(files,result['context']['section_id'],question)
     if isinstance(parse_draft(result['draft']),InstructionalDraft):
-        content=render_instructional_notion(result,bundle,bindings)
+        content=render_instructional_notion(result,bundle,bindings,reviewed['content_review'].get('notes',[]))
     else:
         content=render_generated(result,reviewed['content_review'])+'\n\n'+render_sources(bundle,bindings)
     key=fingerprint(['reviewed-model-notion-v2-readable',source_cp.operation_key,fingerprint(result),reviewed['content_review'],fingerprint(content)])

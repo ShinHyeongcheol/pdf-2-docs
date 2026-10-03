@@ -32,6 +32,7 @@ vs asynchronous calls, parameters, replacement, retry and caching in the main pr
 End with a few reasoning/application questions; answers explain why. Do not use
 cloze or demand verbatim source recall. Original transcripts and audits are supporting
 material, not the instructional body. Return only the requested structured schema.
+Use globally unique IDs for units, examples, claims and questions.
 No images, credentials, local paths or external retrieval."""
 
 PEDAGOGY_CHECKS = {'concept_coverage', 'connected_explanation', 'worked_examples',
@@ -153,6 +154,7 @@ def render_teaching(draft, context, *, after_unit=None):
                   '**기대 결과:** '+encode_text(u.example.expected_output),
                   encode_text(u.example.interpretation.text),'### 헷갈리기 쉬운 점',
                   encode_text(u.misconception.text),
+                  '### 원문과 설명 맞춰 읽기',encode_text(u.material_reading.text),
                   '출처: PDF '+', '.join('p'+str(p) for p in teaching_pages(context,u))]
         if after_unit:parts.extend(after_unit(u))
     return '\n\n'.join(parts)
@@ -165,7 +167,7 @@ def render_practice(draft):
     return '\n\n'.join(parts)
 
 
-def render_instructional_html(draft,context,title,bundle):
+def render_instructional_html(draft,context,title,bundle,notes=()):
     esc=html.escape
     owners=place_materials(draft,context,bundle)
     parts=['<!doctype html><html lang="ko"><head><meta charset="utf-8">',
@@ -179,9 +181,10 @@ def render_instructional_html(draft,context,title,bundle):
                 *['<p>'+esc(c.text)+'</p>' for c in [u.definition,u.purpose,*u.mechanism]],
                 '<aside><p>학습용 가상 예시 · 실제 생성 결과 아님</p><p>입력: '+esc(u.example.input)+'</p>',
                 '<p>기대 결과: '+esc(u.example.expected_output)+'</p><p>'+esc(u.example.interpretation.text)+'</p></aside>',
-                '<h3>헷갈리기 쉬운 점</h3><p>'+esc(u.misconception.text)+'</p><p>출처: '+
+                '<h3>헷갈리기 쉬운 점</h3><p>'+esc(u.misconception.text)+'</p>',
+                '<h3>원문과 설명 맞춰 읽기</h3><p>'+esc(u.material_reading.text)+'</p><p>출처: '+
                 ', '.join('PDF p'+str(p) for p in teaching_pages(context,u))+'</p>']
-        if owners[u.teaching_id]:parts+=['<h3>원본 자료와 설명 맞춰 읽기</h3><p>'+esc(u.material_reading.text)+'</p>']
+        if owners[u.teaching_id]:parts+=['<h3>원본 자료</h3>']
         for f,pages in owners[u.teaching_id]:
             parts+=['<p>출처: '+', '.join('PDF p'+str(p) for p in sorted(pages))+'</p>']
             if f['status']=='candidate':parts+=['<p>미확정 코드 후보 · 원본에서 호출 흐름을 확인하세요. 실행 미검증.</p>']
@@ -197,6 +200,7 @@ def render_instructional_html(draft,context,title,bundle):
                 if image['source']['page'] in pages and image['local_path']:
                     parts+=['<img alt="원본 p'+str(image['source']['page'])+'" src="'+esc(image['local_path'])+'">']
         parts+=['</section>']
+    if notes:parts+=['<details><summary>읽기 안내</summary>',*['<p>'+esc(n)+'</p>' for n in notes],'</details>']
     parts+=['<details><summary>원본·교정 자료</summary><a href="source.html">원본과 코드·표 확인</a></details>',
             '<h2>스스로 설명해 보기</h2>']
     for q in draft.exercises:parts+=['<p>'+esc(q.question)+'</p><details><summary>해설</summary><p>'+esc(q.answer.text)+'</p></details>']
