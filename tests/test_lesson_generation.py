@@ -26,7 +26,7 @@ def inputs(tmp_path):
     paths=[]
     for name in names:
         p=directory/name; p.write_bytes((ROOT/'fixtures'/name).read_bytes()); paths.append(p)
-    a=create_proposal(paths,'unit.part',output_dir=tmp_path/'results',budget_ledger=tmp_path/'ledger/budget.sqlite',key_project_root=ROOT,now=NOW)
+    a=create_proposal(paths,'unit.part',lesson_format='summary_v1',output_dir=tmp_path/'results',budget_ledger=tmp_path/'ledger/budget.sqlite',key_project_root=ROOT,now=NOW)
     for name in ['user_approved','data_transfer_confirmed','budget_confirmed','pricing_capabilities_confirmed']:
         setattr(a,name,True)
     return paths,a

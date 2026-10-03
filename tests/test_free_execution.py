@@ -20,7 +20,7 @@ def free_plan(paths,tmp_path):
     png=tmp_path/'evidence/free.png';png.parent.mkdir();png.write_bytes(b'\x89PNG\r\n\x1a\nauthored metadata fixture')
     evidence=FreeTierEvidence(project_id='authored-free-project',verified_at=NOW,expires_at=NOW+timedelta(hours=1),
         image_paths=[str(png)],image_sha256=[hashlib.sha256(png.read_bytes()).hexdigest()])
-    a=create_proposal(paths,'unit.part',output_dir=tmp_path/'results',budget_ledger=paid,key_project_root=ROOT,
+    a=create_proposal(paths,'unit.part',lesson_format='summary_v1',output_dir=tmp_path/'results',budget_ledger=paid,key_project_root=ROOT,
         free_tier_evidence=evidence,free_ledger=tmp_path/'free/runs.sqlite',now=NOW)
     for name in ('user_approved','data_transfer_confirmed','budget_confirmed','pricing_capabilities_confirmed'):
         setattr(a,name,True)
