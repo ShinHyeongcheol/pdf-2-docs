@@ -16,12 +16,13 @@ from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import tracing_context
-from pydantic import Field
+from pydantic import Field, model_validator, model_serializer
 
 from .contracts import Contract
 from .live_run import ModelSnapshot, fingerprint
 from .providers import selected_key
 from .provider_diagnostics import safe_error_diagnostic
+from .free_execution import FreeTierEvidence,validate_evidence,free_connection,paid_total_readonly,verified_project
 from .quiz import cloze_question, prepare_context
 from .rag_files import load_review_files, read_json_input
 from .study_bundle import build_bundle, check_existing, encode, private_destination, sha, render as render_source
@@ -97,8 +98,29 @@ class LessonSpec(Contract):
     timeout_seconds: Literal[60] = 60
     max_requests: Literal[1] = 1
     images_transmitted: Literal[False] = False
-    conditional_cost_micro_usd: Literal[360448] = COST_MICRO_USD
+    conditional_cost_micro_usd: Literal[0,360448] = COST_MICRO_USD
     cumulative_budget_micro_usd: Literal[10000000] = BUDGET_MICRO_USD
+    billing_mode: Literal['paid_reservation','verified_free'] = 'paid_reservation'
+    free_ledger: str | None = None
+    free_tier_evidence: FreeTierEvidence | None = None
+
+    @model_validator(mode='after')
+    def billing_policy(self):
+        if self.billing_mode=='paid_reservation':
+            if self.conditional_cost_micro_usd!=COST_MICRO_USD or self.free_ledger is not None or self.free_tier_evidence is not None:
+                raise ValueError('paid policy cannot waive reservations')
+        elif (self.conditional_cost_micro_usd!=0 or not self.free_ledger or self.free_tier_evidence is None
+              or self.free_ledger==self.budget_ledger):
+            raise ValueError('separate verified free policy required')
+        return self
+
+    @model_serializer(mode='wrap')
+    def serialize_policy(self, handler):
+        data=handler(self)
+        # Preserve historical paid approval/session fingerprints exactly.
+        if self.billing_mode=='paid_reservation':
+            for name in ('billing_mode','free_ledger','free_tier_evidence'):data.pop(name,None)
+        return data
 
 
 class LessonApproval(Contract):
@@ -145,12 +167,12 @@ def messages(context):
 
 
 def wire_schema():
-    """Small provider schema; strict bounds remain in local LessonDraft validation."""
+    """Provider-compatible schema; all count and string bounds are enforced locally."""
     def trim(value):
         if isinstance(value, dict):
             return {k:({name:trim(schema) for name,schema in v.items()}
                        if k in {'properties','$defs'} else trim(v)) for k,v in value.items()
-                    if k not in {'title','minLength','maxLength'}}
+                    if k not in {'title','minLength','maxLength','minItems','maxItems'}}
         if isinstance(value, list): return [trim(v) for v in value]
         return value
     return trim(LessonDraft.model_json_schema())
@@ -217,7 +239,7 @@ def _inputs(spec):
     return files, units_for(files,spec.section_id,spec.exclude_pages)
 
 
-def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None):
+def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,key_project_root,now=None,free_tier_evidence=None,free_ledger=None):
     now = now or datetime.now(timezone.utc)
     paths=[Path(p) for p in paths]
     output=private_destination(Path(output_dir),paths)
@@ -229,11 +251,20 @@ def create_proposal(paths,section,exclude_pages=(),*,output_dir,budget_ledger,ke
     context=units_for(files,section,list(exclude_pages))
     request=expected_request(context)
     if len(encode(request))>100000: raise ValueError('request byte limit exceeded')
+    free_fields={}
+    if free_tier_evidence is not None:
+        evidence=validate_evidence(free_tier_evidence,now)
+        ledger=Path(free_ledger);private_destination(ledger.parent,paths);_regular(ledger)
+        if ledger.suffix!='.sqlite' or ledger.resolve()==budget.resolve():raise ValueError('separate free SQLite ledger required')
+        paid_total_readonly(budget.resolve())
+        free_fields=dict(billing_mode='verified_free',conditional_cost_micro_usd=0,
+                         free_ledger=str(ledger.resolve()),free_tier_evidence=evidence)
+    elif free_ledger is not None:raise ValueError('free-tier evidence required')
     spec=LessonSpec(run_id=str(uuid4()),created_at=now,expires_at=now+timedelta(hours=1),
         model_snapshot=ModelSnapshot(),input_paths=[str(p.resolve()) for p in paths],
         input_sha256=[sha(p.read_bytes()) for p in paths],section_id=section,exclude_pages=list(exclude_pages),
         output_dir=str(output),budget_ledger=str(budget.resolve()),key_project_root=str(key_root.resolve()),
-        context_digest=fingerprint(context),request_digest=fingerprint(request))
+        context_digest=fingerprint(context),request_digest=fingerprint(request),**free_fields)
     return LessonApproval(spec=spec,plan_sha256=fingerprint(spec.model_dump(mode='json')))
 
 
@@ -249,6 +280,7 @@ def validate_approval(approval,expected_sha,*,now=None):
         raise ValueError('approval expired')
     if a.spec.model_snapshot!=ModelSnapshot() or not 0<=(now.date()-a.spec.model_snapshot.checked_on).days<=7:
         raise ValueError('price/capability snapshot requires review')
+    if a.spec.billing_mode=='verified_free':validate_evidence(a.spec.free_tier_evidence,now)
     files,context=_inputs(a.spec)
     request=expected_request(context)
     if fingerprint(context)!=a.spec.context_digest or fingerprint(request)!=a.spec.request_digest or len(encode(request))>a.spec.max_request_bytes:
@@ -257,7 +289,23 @@ def validate_approval(approval,expected_sha,*,now=None):
 
 
 def operation_key(spec):
-    return fingerprint([spec.input_sha256,spec.section_id,spec.exclude_pages,spec.model_snapshot.model,spec.request_digest])
+    parts=[spec.input_sha256,spec.section_id,spec.exclude_pages,spec.model_snapshot.model,spec.request_digest]
+    if spec.billing_mode=='verified_free':parts+=['verified_free',spec.free_tier_evidence.project_id]
+    return fingerprint(parts)
+
+
+def _execution_connection(spec):
+    return free_connection(Path(spec.free_ledger)) if spec.billing_mode=='verified_free' else _budget_connection(Path(spec.budget_ledger))
+
+
+def _result_connection(result,budget_path):
+    if result.get('billing_mode','paid_reservation')=='verified_free':
+        if (result.get('conditional_cost_micro_usd')!=0 or result.get('paid_budget_ledger')!=str(Path(budget_path).resolve())
+                or not result.get('free_tier_evidence_digest') or not result.get('free_project_id')):
+            raise ValueError('free receipt binding mismatch')
+        paid_total_readonly(Path(budget_path).resolve())
+        return free_connection(Path(result['execution_ledger']))
+    return _budget_connection(Path(budget_path))
 
 
 def _regular(path):
@@ -312,7 +360,7 @@ def seed_previous_run(path, receipt_path):
     finally: db.close()
 
 
-def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,client_factory=None,key_provider=None,now=None):
+def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,client_factory=None,key_provider=None,now=None,free_project_verifier=None):
     a=LessonApproval.model_validate(approval.model_dump())
     _,context=validate_approval(a,expected_sha,now=now)
     if [str(Path(p).resolve()) for p in [output_dir,budget_path,key_project_root]] != [a.spec.output_dir,a.spec.budget_ledger,a.spec.key_project_root]:
@@ -323,26 +371,46 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
     op=operation_key(a.spec); result_path=root/(op+'.json'); provider_path=root/(op+'-provider.json')
     error_path=root/(op+'-error.json')
     _regular(result_path); _regular(provider_path); _regular(error_path)
-    db=_budget_connection(budget)
+    if a.spec.billing_mode=='verified_free':
+        free_path=Path(a.spec.free_ledger);private_destination(free_path.parent,[Path(p) for p in a.spec.input_paths]);_regular(free_path)
+        if free_path.resolve()==budget.resolve():raise ValueError('free ledger must preserve paid history')
+    db=_execution_connection(a.spec)
     requests=0; reserved=False
     try:
         db.execute('BEGIN IMMEDIATE')
         existing=db.execute('SELECT status,result_path,result_sha FROM reservations WHERE operation=?',(op,)).fetchone()
         if existing:
             db.execute('COMMIT')
-            if existing[0]!='completed' or not existing[1] or Path(existing[1])!=result_path: raise ValueError('run consumed or ambiguous; no automatic retry')
-            raw=read_json_input(result_path,max_bytes=500000)
+            saved_path=Path(existing[1]) if existing[1] else None
+            recovery_path=root/(op+'-ids.json')
+            if existing[0]!='completed' or saved_path not in (result_path,recovery_path): raise ValueError('run consumed or ambiguous; no automatic retry')
+            raw=read_json_input(saved_path,max_bytes=500000)
+            if saved_path==recovery_path:
+                recovery=raw.get('id_recovery',{})
+                if (recovery.get('original_result_path')!=str(result_path.resolve()) or
+                        recovery.get('original_result_digest')!=fingerprint(read_json_input(result_path,max_bytes=500000))):
+                    raise ValueError('saved recovery source changed')
             if fingerprint(raw)!=existing[2] or raw['context_digest']!=a.spec.context_digest or raw['status']!='ready_for_content_review':
                 raise ValueError('saved result changed; human review required')
             if verify_draft(context,LessonDraft.model_validate(raw['draft'])): raise ValueError('saved result failed validation')
             return raw,'unchanged'
-        total=db.execute('SELECT coalesce(sum(cost),0) FROM reservations').fetchone()[0]
-        if total+COST_MICRO_USD>BUDGET_MICRO_USD: raise ValueError('cumulative cost budget exhausted')
+        total=(paid_total_readonly(budget.resolve()) if a.spec.billing_mode=='verified_free'
+               else db.execute('SELECT coalesce(sum(cost),0) FROM reservations').fetchone()[0])
+        cost=a.spec.conditional_cost_micro_usd
+        if total+cost>BUDGET_MICRO_USD: raise ValueError('cumulative cost budget exhausted')
         if result_path.exists() or provider_path.exists() or error_path.exists(): raise ValueError('existing result without receipt; preserve it')
-        db.execute('INSERT INTO reservations(operation,run_id,cost,status,result_path,result_sha) VALUES(?,?,?,?,?,?)',(op,a.spec.run_id,COST_MICRO_USD,'reserved',None,None))
+        key=None
+        if a.spec.billing_mode=='verified_free':
+            if free_project_verifier is None:
+                if not a.spec.free_tier_evidence.project_matcher_path:raise ValueError('runtime free project verifier required')
+                free_project_verifier=verified_project
+            key=key_provider() if key_provider is not None else selected_key('GEMINI_API_KEY',Path(key_project_root))
+            if not key or free_project_verifier(key,a.spec.free_tier_evidence)!=a.spec.free_tier_evidence.project_id:
+                raise ValueError('current key project differs from verified free project')
+        db.execute('INSERT INTO reservations(operation,run_id,cost,status,result_path,result_sha) VALUES(?,?,?,?,?,?)',(op,a.spec.run_id,cost,'reserved',None,None))
         db.execute('COMMIT')
         reserved=True
-        key=key_provider() if key_provider is not None else selected_key('GEMINI_API_KEY',Path(key_project_root))
+        if key is None:key=key_provider() if key_provider is not None else selected_key('GEMINI_API_KEY',Path(key_project_root))
         if not key: raise ValueError('selected key unavailable')
         requests=0
         def guard(request):
@@ -355,7 +423,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             if len(request.content)>100000 or fingerprint(json.loads(request.content))!=a.spec.request_digest:
                 raise ValueError('final SDK request changed')
             requests+=1
-            hook_db=_budget_connection(budget)
+            hook_db=_execution_connection(a.spec)
             try: hook_db.execute('UPDATE reservations SET request_count=? WHERE operation=?',(requests,op))
             finally: hook_db.close()
         def preserve_response(response):
@@ -371,7 +439,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
                 with os.fdopen(fd,'w',encoding='utf-8') as stream:
                     stream.write(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n')
                     stream.flush();os.fsync(stream.fileno())
-                hook_db=_budget_connection(budget)
+                hook_db=_execution_connection(a.spec)
                 try:
                     hook_db.execute('UPDATE reservations SET result_path=?,result_sha=? WHERE operation=?',
                         (str(error_path),fingerprint(receipt),op))
@@ -403,7 +471,7 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             with os.fdopen(fd,'w',encoding='utf-8') as stream:
                 stream.write(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n')
                 stream.flush();os.fsync(stream.fileno())
-            hook_db=_budget_connection(budget)
+            hook_db=_execution_connection(a.spec)
             try:
                 hook_db.execute('UPDATE reservations SET result_path=?,result_sha=? WHERE operation=?',
                     (str(provider_path),fingerprint(receipt),op))
@@ -436,9 +504,13 @@ def execute(approval,expected_sha,budget_path,output_dir,key_project_root,*,clie
             input_paths=a.spec.input_paths,input_sha256=a.spec.input_sha256,draft=draft.model_dump(mode='json'),
             status='failed_content_validation' if errors else 'ready_for_content_review',errors=errors,
             execution_mode=mode,request_count=requests,usage_tokens=tokens,
-            usage_estimated_usd=str(estimate) if estimate is not None else None,
-            provider_charge_confirmed=False,conditional_cost_micro_usd=COST_MICRO_USD,
-            cumulative_reserved_micro_usd=total+COST_MICRO_USD,images_transmitted=False,
+            usage_estimated_usd='0' if a.spec.billing_mode=='verified_free' else str(estimate) if estimate is not None else None,
+            provider_charge_confirmed=False,conditional_cost_micro_usd=cost,
+            cumulative_reserved_micro_usd=total+cost,images_transmitted=False,
+            billing_mode=a.spec.billing_mode,paid_budget_ledger=str(budget.resolve()),
+            execution_ledger=a.spec.free_ledger or str(budget.resolve()),
+            free_project_id=a.spec.free_tier_evidence.project_id if a.spec.free_tier_evidence else None,
+            free_tier_evidence_digest=fingerprint(a.spec.free_tier_evidence.model_dump(mode='json')) if a.spec.free_tier_evidence else None,
             human_review_required=True,semantic_correctness_verified=False)
         root.mkdir(parents=True,exist_ok=True)
         with result_path.open('x',encoding='utf-8') as stream:
@@ -483,7 +555,7 @@ def recover_positional_ids(result_path, *, budget_path):
         id_recovery=dict(method='positional_ids_only',original_result_path=str(source.resolve()),
                          original_result_digest=fingerprint(original),original_errors=original['errors'],changes=changes,
                          additional_model_requests=0,text_and_citations_changed=False))
-    db=_budget_connection(Path(budget_path))
+    db=_result_connection(original,budget_path)
     try:
         db.execute('BEGIN IMMEDIATE')
         row=db.execute('SELECT status,result_path,result_sha,request_count FROM reservations WHERE operation=?',
@@ -551,7 +623,7 @@ def render_lesson(result,review,title='Model'):
 
 def write_reading_bundle(result_path,review_path,files,section,question,output_dir,*,budget_path):
     result=read_json_input(Path(result_path),max_bytes=500000)
-    db=_budget_connection(Path(budget_path))
+    db=_result_connection(result,budget_path)
     try: receipt=db.execute('SELECT status,result_path,result_sha,request_count FROM reservations WHERE operation=?',(result['operation_key'],)).fetchone()
     finally: db.close()
     if receipt!=('completed',str(Path(result_path).resolve()),fingerprint(result),1): raise ValueError('executor receipt mismatch')

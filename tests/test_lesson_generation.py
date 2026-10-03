@@ -294,10 +294,10 @@ def test_source_excluded_candidate_cannot_change_only_in_memory(inputs,tmp_path)
 def test_wire_schema_omits_only_metadata_and_bounds_and_local_validation_remains(inputs,tmp_path):
     _,a=inputs
     serialized=json.dumps(wire_schema())
-    for key in ['minLength','maxLength']:
+    for key in ['minLength','maxLength','minItems','maxItems']:
         assert '"'+key+'"' not in serialized
-    assert wire_schema()['properties']['topics']['minItems']==1
-    assert wire_schema()['properties']['topics']['maxItems']==6
+    assert LessonDraft.model_json_schema()['properties']['topics']['minItems']==1
+    assert LessonDraft.model_json_schema()['properties']['topics']['maxItems']==6
     assert 'title' not in wire_schema()
     assert 'title' in wire_schema()['$defs']['Topic']['properties']
     assert wire_schema()['additionalProperties'] is False
@@ -383,11 +383,11 @@ def test_sdk_schema_rejection_records_only_allowlisted_diagnostic(inputs,tmp_pat
     ([{'@type':'type.googleapis.com/google.rpc.ErrorInfo','reason':'API_KEY_EXPIRED'}],
      {'reasons':['API_KEY_EXPIRED']}),
     ([{'@type':'type.googleapis.com/google.rpc.BadRequest','fieldViolations':[
-        {'field':'generation_config.response_json_schema.properties.topics.max_items',
+        {'field':'generation_config.response_json_schema.properties.topics.items',
          'description':'fabricated-private-key private provider text'},
         {'field':'generationConfig.fabricated-private-key','description':'private'},
         {'field':'generationConfig.arbitrary_private_data'}]}],
-     {'field_paths':['generation_config.response_json_schema.properties.topics.max_items']}),
+     {'field_paths':['generation_config.response_json_schema.properties.topics.items']}),
 ])
 def test_sdk_http400_generic_classification_has_distinct_safe_receipt(inputs,tmp_path,details,expected):
     _,a=inputs;seen=[]
@@ -480,12 +480,15 @@ def test_duplicate_id_offline_recovery_preserves_content_original_and_cost(input
     assert source.read_bytes()==before and len(seen)==1
     for old,new in zip(original['draft']['topics'],recovered['draft']['topics']):
         assert old['title']==new['title']
-        for a,b in zip(old['claims'],new['claims']):
-            assert {k:v for k,v in a.items() if k!='claim_id'}=={k:v for k,v in b.items() if k!='claim_id'}
+        for old_claim,new_claim in zip(old['claims'],new['claims']):
+            assert {k:v for k,v in old_claim.items() if k!='claim_id'}=={k:v for k,v in new_claim.items() if k!='claim_id'}
     for old,new in zip(original['draft']['exercises'],recovered['draft']['exercises']):
         assert {k:v for k,v in old.items() if k not in ['question_id','explanation']}=={k:v for k,v in new.items() if k not in ['question_id','explanation']}
         assert old['explanation']['text']==new['explanation']['text'] and old['explanation']['citations']==new['explanation']['citations']
     assert recover_positional_ids(source,budget_path=ledger)==(recovered,'unchanged')
+    assert execute(a,a.plan_sha256,ledger,tmp_path/'results',ROOT,now=NOW,
+        key_provider=lambda:pytest.fail('recovered result key lookup'),
+        client_factory=lambda **kw:pytest.fail('recovered result retry'))==(recovered,'unchanged')
     db=sqlite3.connect(ledger)
     assert db.execute('SELECT status,request_count,cost FROM reservations').fetchone()==('completed',1,COST_MICRO_USD)
     db.close()
@@ -501,6 +504,17 @@ def test_recovery_rejects_other_failure_without_writing(inputs,tmp_path):
     before=source.read_bytes()
     with pytest.raises(ValueError,match='only duplicate'):recover_positional_ids(source,budget_path=ledger)
     assert source.read_bytes()==before and not source.with_name(original['operation_key']+'-ids.json').exists()
+
+
+def test_message_only_error_keeps_public_terms_without_private_values():
+    from pdf_notion_mvp.provider_diagnostics import safe_error_diagnostic
+    response=httpx.Response(400,json={'error':{'status':'INVALID_ARGUMENT','message':
+        'Invalid schema generation_config.response_json_schema properties topics minItems '
+        'fabricated-private-key confidential-note 123456789012'}})
+    diagnostic=safe_error_diagnostic(response,expected_request({'units':[]}),'fabricated-private-key','gemini-3.1-flash-lite')
+    assert diagnostic['message_terms']==['invalid','schema','generationconfig','responsejsonschema','properties','topics','minitems']
+    assert 'fabricated-private-key' not in json.dumps(diagnostic)
+    assert 'confidential-note' not in json.dumps(diagnostic) and '123456789012' not in json.dumps(diagnostic)
 
 
 def test_id_recovery_does_not_trust_claimed_error_list(inputs,tmp_path):

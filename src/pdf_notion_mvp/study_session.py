@@ -11,6 +11,7 @@ from .lesson_generation import (LessonApproval, create_proposal, execute, finger
                                 operation_key, safe_error_code, write_reading_bundle)
 from .rag_files import load_review_files, read_json_input
 from .study_bundle import private_destination, run as local_bundle, sha
+from .free_execution import FreeTierEvidence
 
 
 BLOCKERS = {
@@ -78,14 +79,15 @@ def _plan_path(session, proposal):
     return Path(session.session_dir)/'plans'/(proposal.plan_sha256+'.json')
 
 
-def prepare(paths, section, question, directory, budget, key_root, exclude_pages=(), *, now=None):
+def prepare(paths, section, question, directory, budget, key_root, exclude_pages=(), *, now=None,free_tier_evidence=None,free_ledger=None):
     paths=[Path(p) for p in paths]
     root=private_destination(Path(directory),paths)
     files=load_review_files(*paths,[],root/'unused.json')
     if any(node.review_status!='confirmed' for node in files.hierarchy.nodes):
         raise ValueError('confirmed global outline required')
     proposal=create_proposal(paths,section,exclude_pages,output_dir=root/'model-results',
-                             budget_ledger=budget,key_project_root=key_root,now=now)
+                             budget_ledger=budget,key_project_root=key_root,now=now,
+                             free_tier_evidence=free_tier_evidence,free_ledger=free_ledger)
     if (root/'session.json').exists() or (root/'session.json').is_symlink():
         session=_load(root)
         if _scope(session.proposal.spec)!=_scope(proposal.spec) or session.question!=question:
@@ -105,7 +107,8 @@ def prepare(paths, section, question, directory, budget, key_root, exclude_pages
 def plan(session, *, now=None):
     spec=session.proposal.spec
     proposal=create_proposal(spec.input_paths,spec.section_id,spec.exclude_pages,
-        output_dir=spec.output_dir,budget_ledger=spec.budget_ledger,key_project_root=spec.key_project_root,now=now)
+        output_dir=spec.output_dir,budget_ledger=spec.budget_ledger,key_project_root=spec.key_project_root,now=now,
+        free_tier_evidence=spec.free_tier_evidence,free_ledger=spec.free_ledger)
     if _scope(proposal.spec)!=_scope(spec):
         raise ValueError('session request changed; prepare a new session')
     _save(_plan_path(session,proposal),proposal.model_dump(mode='json'))
@@ -153,6 +156,8 @@ def main(argv=None):
     for flag in ('section','question'):
         prepare_parser.add_argument('--'+flag,required=True)
     prepare_parser.add_argument('--exclude-page',type=int,action='append',default=[])
+    prepare_parser.add_argument('--free-evidence',type=Path)
+    prepare_parser.add_argument('--free-ledger',type=Path)
     for action in ('plan','generate','render'):
         child=sub.add_parser(action)
         child.add_argument('--session-dir',type=Path,required=True)
@@ -165,8 +170,10 @@ def main(argv=None):
     args=parser.parse_args(argv);session=None
     try:
         if args.action=='prepare':
+            evidence=FreeTierEvidence.model_validate(read_json_input(args.free_evidence)) if args.free_evidence else None
             session,status=prepare([args.source,args.outline,args.review],args.section,args.question,
-                args.session_dir,args.budget_ledger,args.key_project_root,args.exclude_page)
+                args.session_dir,args.budget_ledger,args.key_project_root,args.exclude_page,
+                free_tier_evidence=evidence,free_ledger=args.free_ledger)
             packet=dict(status=status,model_requests=0,key_reads=0,notion_requests=0,**summary(session))
         else:
             session=_load(args.session_dir)
