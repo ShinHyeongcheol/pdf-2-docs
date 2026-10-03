@@ -63,6 +63,25 @@ def safe_error_diagnostic(response, approved_request, secret, model):
     status = error.get('status')
     if isinstance(status, str) and status in STATUSES and not (secret and secret in status):
         result['provider_status'] = status
+    # Some server rejections supply only a message, with no rpc.BadRequest.
+    # Keep vocabulary tokens, never arbitrary prose, numbers, values or quotes.
+    message=error.get('message')
+    if isinstance(message,str):
+        vocabulary={word for word in ('generatecontentrequest generationconfig responsejsonschema responseschema '
+            'properties items required additionalproperties defs ref minitems maxitems schema invalid invalidargument '
+            'payload unknown name field supported unsupported complex states many large exceed maximum minimum '
+            'constraints type allowed only not cannot api key valid expired permission denied billing free tier limit quota requests').split()}
+        def public_names(obj):
+            if isinstance(obj,dict):
+                for name,child in obj.items():
+                    vocabulary.add(name.replace('_','').lstrip('$').casefold());public_names(child)
+            elif isinstance(obj,list):
+                for child in obj:public_names(child)
+        public_names(approved_request)
+        scrubbed=message.replace(secret,'') if secret else message
+        terms=[term.replace('_','').lstrip('$').casefold() for term in re.findall(r'[A-Za-z_$][A-Za-z0-9_$]*',scrubbed)]
+        terms=[term for term in terms if term in vocabulary][:64]
+        if terms:result['message_terms']=terms
     details = error.get('details')
     if not isinstance(details, list):
         return result

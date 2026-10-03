@@ -19,7 +19,7 @@ PYTHONPATH=src .venv/bin/python -m pdf_notion_mvp.lesson_generation --mode plan 
 
 예시 페이지 번호는 실제 선택 절에 맞게 바꾸세요. 결과·원장·승인 파일은 Git과 입력 폴더 밖의 정규 절대 경로에 보관합니다. 출력·비용 원장·키 루트를 바꿔 같은 승인을 재사용할 수 없습니다.
 
-비용 원장은 SQLite의 단일 트랜잭션으로 최대 누적 $10을 예약하고 실패도 환불하지 않습니다. 이전 실제 합성 실행은 `seed_previous_run(ledger, completed_receipt)`로 동일 공유 원장에 한 번 포함해야 합니다. 주입된 mock 원장은 실제 비용으로 seed할 수 없습니다. 모든 실제 호출에서 이 같은 원장을 사용하세요. 계정의 다른 앱 호출이나 원장 삭제·복사까지 방지하는 전역 결제 상한은 아닙니다.
+비용 원장은 SQLite의 단일 트랜잭션으로 최대 누적 $10을 예약하고 실패도 환불하지 않습니다. 이전 실제 합성 실행은 `seed_previous_run(ledger, completed_receipt)`로 동일 공유 원장에 한 번 포함해야 합니다. 주입된 mock 원장은 실제 비용으로 seed할 수 없습니다. 유료 예약 경로의 모든 실제 호출에서 이 같은 원장을 사용하세요. 검증된 무료 실행은 아래 별도 원장을 사용합니다. 계정의 다른 앱 호출이나 원장 삭제·복사까지 방지하는 전역 결제 상한은 아닙니다.
 
 별도 승인을 확인한 제안의 네 boolean만 true로 저장하고 아래를 실행합니다. 이 명령 자체는 승인을 대신하지 않습니다.
 
@@ -46,8 +46,11 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/test_lesson_generation.py -q
 
 공개 테스트는 작성한 합성 fixture와 가짜 키/실제 SDK MockTransport만 사용합니다. 실제 입력·승인·키·생성 내용·검토·비용 원장은 공개 Git에 포함하지 않습니다.
 
-Provider requests omit metadata titles and string length bounds, while retaining
-array count bounds so the provider schema and local Pydantic contract agree.
+Provider requests omit metadata titles, string length bounds and array count
+bounds. A controlled live comparison of one synthetic request rejected the schema
+with eight array bounds and accepted it with those bounds omitted. This identifies
+a compatibility issue with that group of constraints; it does not establish that
+Gemini generally rejects the documented keywords or identify one offending bound.
 Full Pydantic limits still apply after parsing, before any result can
 be accepted. An allowlisted error category is retained for rejected requests;
 provider exception bodies and credential-bearing messages are never persisted.
@@ -65,8 +68,9 @@ HTTP 200 본문이 선택된 키를 되돌려 보내는 경우에는 JSON escape
 
 HTTP 오류 응답은 원문 대신 `OPERATION-error.json`에 HTTP 상태, 허용된 Google
 오류 상태·ErrorInfo 사유, 승인 요청에 있는 필드 식별자, 알려진 quota metric과
-짧은 retry delay만 기록합니다. 메시지·설명·임의 metadata·프로젝트 ID·헤더는
-저장하지 않습니다. 이 파일도 0600·배타 저장·원장 지문 결합을 사용하고 실패는
+짧은 retry delay만 기록합니다. 메시지 원문·설명·임의 metadata·프로젝트 ID·헤더는
+저장하지 않습니다. 상세 필드가 없는 오류에는 고정된 공개 진단 어휘와 승인 요청의
+필드 이름에 속하는 토큰만 최대 64개 기록합니다. 임의 값·숫자·인용문은 보존하지 않습니다. 이 파일도 0600·배타 저장·원장 지문 결합을 사용하고 실패는
 소비된 상태와 기존 비용 예약을 유지합니다. retry delay를 기록해도 자동 재시도는
 하지 않습니다. free-tier quota metric이 관측되어도 계정의 무료 등급이나 무료
 한도 소진을 확정하지 않습니다. 계정 등급은 별도로 확인해야 합니다.
@@ -79,3 +83,27 @@ HTTP 오류 응답은 원문 대신 `OPERATION-error.json`에 HTTP 상태, 허�
 변경한 별도 파일과 before/after 이력을 저장합니다. 텍스트·인용은 바꾸지 않고,
 다른 검증 실패·출처 변경·원장 불일치는 거부합니다. 비용 예약은 유지하며
 복구된 결과도 완전한 독립 내용 대조를 거쳐야 읽기 묶음을 만들 수 있습니다.
+
+
+## 검증된 무료 실행
+
+기본값은 기존 유료 예약입니다. 무료 실행은 `FreeTierEvidence`를 별도로 검토해
+`create_proposal(..., free_tier_evidence=evidence, free_ledger=private_path)`에
+명시해야 합니다. 증거는 현재 프로젝트의 Free 등급과 선택 모델, 1–2개 로컬 PNG의
+지문, 시간대가 있는 확인·만료 시각(최대 하루), 검증 방법을 결합합니다. 스크린샷이
+무료 등급을 보인다는 판정은 운영자의 직접 대조이며 자동 과금 확인이 아닙니다.
+
+현재 키가 해당 프로젝트에 속하는지 실행 직전에 검증해야 합니다. 승인된 로컬
+실행 파일의 절대 경로·SHA를 증거에 결합할 수 있고, 키는 그 파일의 stdin으로만
+전달합니다. 검증기는 표준 출력에 `{"matched":true,"projects":["verified-project-id"]}`
+형태의 제한된 결과만 반환해야 합니다. 파일 지문·PNG·기간·현재 키 프로젝트가
+맞지 않으면 HTTP 요청과 예약 전에 중단합니다. 스크린샷·검증기·키는 공개 Git에
+포함하지 않습니다. 이 경계는 임의 외부 검증기를 신뢰한다는 뜻이므로 운영자가
+실행 파일을 검토한 뒤 승인해야 합니다.
+
+무료 receipt는 유료 원장과 다른 identity의 별도 SQLite에 비용 0으로 기록합니다.
+기존 유료 원장은 읽기 전용으로 확인하며 예약·실패 이력·누적 $10 한도를 유지합니다.
+무료 실패도 소비된 요청으로 남고, 유료 전환·키 교체·429 재시도를 자동 실행하지
+않습니다. 실제 계정 청구 확인은 계속 false입니다. 증거 갱신으로 실패 작업을
+초기화할 수 없으며, API 없는 ID 복구·독립 검수·읽기 제작은 같은 무료 receipt를
+검증합니다. 복구 뒤 반복 생성도 복구된 완료 결과를 반환하고 키를 다시 읽지 않습니다.
