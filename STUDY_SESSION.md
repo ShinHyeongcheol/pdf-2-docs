@@ -102,3 +102,7 @@ Notion은 [NOTION_BRIDGE.md](NOTION_BRIDGE.md)의 별도 승인 계획·연결 �
 공개 테스트의 무료 경로도 합성 PNG·가짜 키·검증기와 SDK MockTransport를
 사용합니다. 실제 무료 등급·청구 또는 Notion 게시 성공은 운영자가 별도의 실행
 receipt와 완전한 게시 readback으로 확인해야 합니다.
+
+새 PDF 추출·후보 목차부터 검수된 생성 결과의 실제 Notion 호스트 연결까지는
+[REVIEWED_PDF_WORKFLOW.md](REVIEWED_PDF_WORKFLOW.md)의 순서와
+`lesson_notion prepare/bind` 명령을 사용합니다.

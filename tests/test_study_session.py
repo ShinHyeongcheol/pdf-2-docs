@@ -104,3 +104,25 @@ def test_candidate_outline_stops_before_artifacts_or_model_access(lesson_inputs,
     with pytest.raises(ValueError,match='confirmed global outline'):
         session_for(a,tmp_path)
     assert not (tmp_path/'session').exists() and not (tmp_path/'ledger').exists()
+
+
+def test_cli_cached_generation_returns_recovered_file_path_without_key_or_transport(inputs,tmp_path,capsys,monkeypatch):
+    from pdf_notion_mvp.lesson_generation import recover_positional_ids
+    from pdf_notion_mvp import study_session
+    paths,a=inputs;now=NOW
+    session,_=prepare(paths,a.spec.section_id,'체크포인트',tmp_path/'session',tmp_path/'ledger/budget.sqlite',ROOT,now=now)
+    approval=session.proposal.model_copy(deep=True)
+    for key in ('user_approved','data_transfer_confirmed','budget_confirmed','pricing_capabilities_confirmed'):setattr(approval,key,True)
+    ap=tmp_path/'approved.json';ap.write_text(approval.model_dump_json())
+    files=load_review_files(*paths,[],tmp_path/'unused.json');context=units_for(files,a.spec.section_id,[]);seen=[]
+    original,_=generate(session,ap,approval.plan_sha256,client_factory=factory(context,seen,'duplicate_ids'),
+        key_provider=lambda:'fabricated-private-key',now=now)
+    original_path=Path(approval.spec.output_dir)/(original['operation_key']+'.json')
+    recovered,_=recover_positional_ids(original_path,budget_path=tmp_path/'ledger/budget.sqlite')
+    monkeypatch.setattr('pdf_notion_mvp.lesson_generation.selected_key',lambda *a,**k:pytest.fail('cached recovery key lookup'))
+    monkeypatch.setattr(study_session,'generate',lambda session,approval,expected_sha:generate(session,approval,expected_sha,now=now))
+    main(['generate','--session-dir',str(tmp_path/'session'),'--approval',str(ap),'--expected-plan-sha256',approval.plan_sha256])
+    packet=json.loads(capsys.readouterr().out)
+    assert packet['status']=='unchanged' and packet['result_path'].endswith('-ids.json')
+    assert json.loads(Path(packet['result_path']).read_text())==recovered
+    assert json.loads(original_path.read_text())['status']=='failed_content_validation' and len(seen)==1
